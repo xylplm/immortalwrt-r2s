@@ -401,10 +401,10 @@ jobs:
             tmp_makefile=$(mktemp)
             awk -v build_packages_line="$build_packages_line" -v install_prefix="$install_prefix" '
               index($0, build_packages_line) && !patched {
+                print "\t" install_prefix " $(filter-out soho-sealhelper soho luci-app-soho,$(BUILD_PACKAGES))"
                 print "\t" install_prefix " soho-sealhelper"
                 print "\t" install_prefix " soho"
                 print "\t" install_prefix " luci-app-soho"
-                print "\t" install_prefix " $(filter-out soho-sealhelper soho luci-app-soho,$(BUILD_PACKAGES))"
                 patched = 1
                 next
               }
@@ -519,7 +519,11 @@ jobs:
 
             mkdir -p packages
             shopt -s nullglob
-            local luci_soho_apks=("$local_apk_dir"/luci-app-soho-*.apk)
+            local luci_soho_apks=(
+              "$local_apk_dir"/luci-app-soho-[0-9]*.apk
+              "$local_apk_dir"/luci-app-soho_[0-9]*_noarch.apk
+              "$local_apk_dir"/luci-app-soho_[0-9]*_all.apk
+            )
             local soho_apks=(
               "$local_apk_dir"/soho_[0-9]*_noarch.apk
               "$local_apk_dir"/soho_[0-9]*_all.apk
