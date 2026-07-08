@@ -579,9 +579,33 @@ jobs:
             return 1
           }
 
+          decompress_image() {
+            local image_gz="$1"
+            local image="$2"
+            local gzip_stderr
+
+            gzip_stderr=$(mktemp)
+            if gzip -dc "$image_gz" > "$image" 2>"$gzip_stderr"; then
+              rm -f "$gzip_stderr"
+              return 0
+            fi
+
+            if grep -qF 'trailing garbage ignored' "$gzip_stderr" && [ -s "$image" ]; then
+              cat "$gzip_stderr" >&2
+              echo "gzip reported a warning while decompressing $(basename "$image_gz"); continuing with the produced image." >&2
+              rm -f "$gzip_stderr"
+              return 0
+            fi
+
+            cat "$gzip_stderr" >&2
+            rm -f "$gzip_stderr"
+            echo "Unable to decompress $(basename "$image_gz")." >&2
+            return 1
+          }
+
           for image_gz in "${images[@]}"; do
             image="$tmpdir/$(basename "${image_gz%.gz}")"
-            gzip -dc "$image_gz" > "$image"
+            decompress_image "$image_gz" "$image"
             mount_rootfs_partition "$image"
 
             bypass_sysupgrade_script="$mount_dir/etc/uci-defaults/96-bypass-sysupgrade"
