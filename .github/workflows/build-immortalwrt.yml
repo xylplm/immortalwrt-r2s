@@ -365,6 +365,13 @@ jobs:
             esac
           }
 
+          variant_needs_soho() {
+            case " $1 " in
+              *' soho-sealhelper '*|*' soho '*|*' luci-app-soho '*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
           enable_apk_force_overwrite() {
             if grep -qF '$(APK) add --force-overwrite --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)' Makefile; then
               return 0
@@ -376,6 +383,40 @@ jobs:
             cp Makefile Makefile.apk-force-overwrite.bak
             sed -i 's#$(APK) add --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)#$(APK) add --force-overwrite --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)#' Makefile
             echo 'Enabled apk --force-overwrite for this variant.'
+          }
+
+          enforce_soho_apk_install_order() {
+            local install_prefix build_packages_line tmp_makefile
+
+            if grep -qF '$(APK) add --force-overwrite --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)' Makefile; then
+              install_prefix='$(APK) add --force-overwrite --arch $(ARCH_PACKAGES) --no-scripts'
+            elif grep -qF '$(APK) add --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)' Makefile; then
+              install_prefix='$(APK) add --arch $(ARCH_PACKAGES) --no-scripts'
+            else
+              echo 'Unable to find ImageBuilder APK install command to patch for Soho ordering.' >&2
+              exit 1
+            fi
+            build_packages_line="${install_prefix} \$(BUILD_PACKAGES)"
+
+            tmp_makefile=$(mktemp)
+            awk -v build_packages_line="$build_packages_line" -v install_prefix="$install_prefix" '
+              index($0, build_packages_line) && !patched {
+                print "\t" install_prefix " soho-sealhelper"
+                print "\t" install_prefix " soho"
+                print "\t" install_prefix " luci-app-soho"
+                print "\t" install_prefix " $(filter-out soho-sealhelper soho luci-app-soho,$(BUILD_PACKAGES))"
+                patched = 1
+                next
+              }
+              { print }
+              END { if (!patched) exit 1 }
+            ' Makefile > "$tmp_makefile" || {
+              rm -f "$tmp_makefile"
+              echo 'Unable to patch ImageBuilder Soho APK install order.' >&2
+              exit 1
+            }
+            mv "$tmp_makefile" Makefile
+            echo 'Enforced official Soho APK install order: soho-sealhelper -> soho -> luci-app-soho.'
           }
 
           ensure_local_apk_repository() {
@@ -479,7 +520,11 @@ jobs:
             mkdir -p packages
             shopt -s nullglob
             local luci_soho_apks=("$local_apk_dir"/luci-app-soho-*.apk)
-            local soho_apks=("$local_apk_dir"/soho_*_noarch.apk)
+            local soho_apks=(
+              "$local_apk_dir"/soho_[0-9]*_noarch.apk
+              "$local_apk_dir"/soho_[0-9]*_all.apk
+              "$local_apk_dir"/soho-[0-9]*.apk
+            )
             local sealhelper_apks=("$local_apk_dir"/soho-sealhelper_*_"${arch_packages}".apk)
             shopt -u nullglob
 
@@ -487,9 +532,9 @@ jobs:
             [ "${#soho_apks[@]}" -eq 1 ] || { echo "Expected exactly one noarch soho APK, found ${#soho_apks[@]}." >&2; exit 1; }
             [ "${#sealhelper_apks[@]}" -eq 1 ] || { echo "Expected exactly one soho-sealhelper APK for ${arch_packages}, found ${#sealhelper_apks[@]}." >&2; exit 1; }
 
-            stage_local_apk_file "${luci_soho_apks[0]}"
-            stage_local_apk_file "${soho_apks[0]}"
             stage_local_apk_file "${sealhelper_apks[0]}"
+            stage_local_apk_file "${soho_apks[0]}"
+            stage_local_apk_file "${luci_soho_apks[0]}"
             ensure_local_apk_repository
           }
 
@@ -498,6 +543,9 @@ jobs:
           stage_local_apks "$packages"
           if variant_needs_apk_force_overwrite "$packages"; then
             enable_apk_force_overwrite
+          fi
+          if variant_needs_soho "$packages"; then
+            enforce_soho_apk_install_order
           fi
 
           make image PROFILE="$PROFILE" PACKAGES="$packages" ROOTFS_PARTSIZE="$ROOTFS_PARTSIZE" FILES="$OPENWRT_FILES"
@@ -659,7 +707,10 @@ jobs:
               for soho_init in soho soho-guard soho-web; do
                 sudo test -x "$mount_dir/etc/init.d/${soho_init}" || { echo "Soho init script is missing or not executable: ${soho_init}" >&2; exit 1; }
                 sudo /bin/sh -n "$mount_dir/etc/init.d/${soho_init}"
-                sudo test -L "$mount_dir/etc/rc.d/S99${soho_init}" || { echo "Soho rc.d autostart symlink is missing: ${soho_init}" >&2; exit 1; }
+                sudo find "$mount_dir/etc/rc.d" -maxdepth 1 -type l -name "S??${soho_init}" -print -quit | grep -q . || {
+                  echo "Soho rc.d autostart symlink is missing: ${soho_init}" >&2
+                  exit 1
+                }
               done
               sudo test -f "$bypass_script" || { echo 'Bypass defaults script is missing from bypass image.' >&2; exit 1; }
               sudo test -x "$bypass_script" || { echo 'Bypass defaults script is not executable.' >&2; exit 1; }
