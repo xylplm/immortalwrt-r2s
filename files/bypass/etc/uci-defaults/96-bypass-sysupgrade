@@ -1,0 +1,15 @@
+#!/bin/sh
+
+SYSUPGRADE_FILE="/etc/sysupgrade.conf"
+
+ensure_line() {
+    local line="$1"
+    local file="$2"
+
+    touch "$file"
+    grep -qxF "$line" "$file" 2>/dev/null || echo "$line" >> "$file"
+}
+
+ensure_line "/etc/soho/" "$SYSUPGRADE_FILE"
+
+exit 0

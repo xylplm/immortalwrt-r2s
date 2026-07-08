@@ -1,0 +1,15 @@
+.DS_Store
+Thumbs.db
+imagebuilder/
+release/
+profiles.json
+sha256sums
+*.tar.zst
+*.tar.gz
+!packages/lucky/*.tar.gz
+*.img
+*.img.gz
+*.manifest
+*.buildinfo
+openwrt-files-*/
+.tmp/

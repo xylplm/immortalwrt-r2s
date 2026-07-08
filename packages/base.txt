@@ -1,0 +1,2 @@
+# Variant 1: official minimal image.
+# Keep empty unless the official NanoPi R2S profile needs an additional package.

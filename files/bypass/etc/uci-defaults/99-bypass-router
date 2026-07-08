@@ -1,0 +1,101 @@
+#!/bin/sh
+
+# First-boot bypass-router defaults for NanoPi R2S.
+# The bypass image intentionally uses the official LAN interface and disables WAN.
+
+find_firewall_zone() {
+    local name="$1"
+    local index=0
+    local zone
+
+    while uci -q get "firewall.@zone[$index]" >/dev/null; do
+        zone="$(uci -q get "firewall.@zone[$index].name")"
+        if [ "$zone" = "$name" ]; then
+            printf '@zone[%s]\n' "$index"
+            return 0
+        fi
+        index=$((index + 1))
+    done
+
+    return 1
+}
+
+ensure_lan_device() {
+    local candidate
+
+    if [ -n "$(uci -q get network.lan.device)" ] || [ -n "$(uci -q get network.lan.ifname)" ]; then
+        return 0
+    fi
+
+    for candidate in eth0 end0; do
+        if [ -e "/sys/class/net/$candidate" ]; then
+            uci set network.lan.device="$candidate"
+            return 0
+        fi
+    done
+}
+
+disable_interface() {
+    local iface="$1"
+
+    uci -q get network."$iface" >/dev/null || return 0
+    uci set network."$iface".proto='none'
+    uci set network."$iface".disabled='1'
+    uci -q delete network."$iface".ipaddr
+    uci -q delete network."$iface".netmask
+    uci -q delete network."$iface".gateway
+    uci -q delete network."$iface".dns
+    uci -q delete network."$iface".peerdns
+}
+
+uci -q get network.lan >/dev/null || uci set network.lan='interface'
+ensure_lan_device
+
+uci set network.lan.proto='static'
+uci set network.lan.ipaddr='10.11.11.3'
+uci set network.lan.netmask='255.255.255.0'
+uci set network.lan.gateway='10.11.11.1'
+uci set network.lan.delegate='0'
+uci -q delete network.lan.dns
+uci add_list network.lan.dns='10.11.11.1'
+uci add_list network.lan.dns='119.29.29.29'
+uci -q delete network.lan.ip6assign
+
+disable_interface wan
+disable_interface wan6
+
+uci -q get dhcp.lan >/dev/null || uci set dhcp.lan='dhcp'
+uci set dhcp.lan.interface='lan'
+uci set dhcp.lan.ignore='1'
+uci set dhcp.lan.dhcpv4='disabled'
+uci set dhcp.lan.dhcpv6='disabled'
+uci set dhcp.lan.ra='disabled'
+
+uci set firewall.@defaults[0].forward='ACCEPT'
+
+lan_zone="$(find_firewall_zone lan)"
+if [ -n "$lan_zone" ]; then
+    uci set firewall."$lan_zone".input='ACCEPT'
+    uci set firewall."$lan_zone".output='ACCEPT'
+    uci set firewall."$lan_zone".forward='ACCEPT'
+    uci -q delete firewall."$lan_zone".masq
+fi
+
+wan_zone="$(find_firewall_zone wan)"
+if [ -n "$wan_zone" ]; then
+    uci set firewall."$wan_zone".input='REJECT'
+    uci set firewall."$wan_zone".forward='REJECT'
+    uci -q delete firewall."$wan_zone".masq
+fi
+
+uci set system.@system[0].timezone='CST-8'
+uci set system.@system[0].zonename='Asia/Shanghai'
+
+if grep -q '^net.ipv4.ip_forward=' /etc/sysctl.conf 2>/dev/null; then
+    sed -i 's/^net.ipv4.ip_forward=.*/net.ipv4.ip_forward=1/' /etc/sysctl.conf
+else
+    echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
+fi
+
+uci commit
+exit 0

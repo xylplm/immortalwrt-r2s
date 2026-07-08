@@ -1,0 +1,767 @@
+name: Build ImmortalWrt NanoPi R2S
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: ImmortalWrt 25.12 发布版本；留空时自动使用最新 25.12 稳定版。
+        required: false
+        type: string
+      variants:
+        description: 选择本次要构建的固件变体。
+        required: false
+        default: 全部变体
+        type: choice
+        options:
+          - 全部变体
+          - 仅标准包
+          - 仅常用包
+          - 仅自用旁路由包
+          - 标准包 + 常用包
+          - 标准包 + 自用旁路由包
+          - 常用包 + 自用旁路由包
+      extra_packages:
+        description: 临时追加到 plus 和 bypass 的软件包，多个包用空格分隔；一般留空。
+        required: false
+        type: string
+      publish_release:
+        description: 构建完成后是否发布到 GitHub Releases。
+        required: false
+        default: 发布到 GitHub Releases
+        type: choice
+        options:
+          - 发布到 GitHub Releases
+          - 只生成 Actions Artifacts
+      prerelease:
+        description: Release 发布类型。
+        required: false
+        default: 正式发布
+        type: choice
+        options:
+          - 正式发布
+          - 标记为预发布
+  schedule:
+    - cron: '20 1 * * 5'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: immortalwrt-r2s-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOWNLOAD_BASE: https://downloads.immortalwrt.org/releases
+  LUCKY_LOCAL_PACKAGE: packages/lucky/lucky_3.0.0_Linux_arm64_xiaojv_waf.tar.gz
+  LUCKY_INSTALL_DIR: /etc/lucky.daji
+  LUCKY_SERVICE_NAME: lucky.daji
+
+jobs:
+  prepare:
+    name: Resolve build matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      release_series: ${{ steps.vars.outputs.release_series }}
+      target: ${{ steps.vars.outputs.target }}
+      target_dash: ${{ steps.vars.outputs.target_dash }}
+      profile: ${{ steps.vars.outputs.profile }}
+      device_name: ${{ steps.vars.outputs.device_name }}
+      release_url: ${{ steps.vars.outputs.release_url }}
+      variants: ${{ steps.vars.outputs.variants }}
+      matrix: ${{ steps.vars.outputs.matrix }}
+      extra_packages: ${{ steps.vars.outputs.extra_packages }}
+      publish_release: ${{ steps.vars.outputs.publish_release }}
+      prerelease: ${{ steps.vars.outputs.prerelease }}
+      base_rootfs_partsize: ${{ steps.vars.outputs.base_rootfs_partsize }}
+      plus_rootfs_partsize: ${{ steps.vars.outputs.plus_rootfs_partsize }}
+      bypass_rootfs_partsize: ${{ steps.vars.outputs.bypass_rootfs_partsize }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Resolve build inputs
+        id: vars
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_VARIANTS: ${{ inputs.variants }}
+          INPUT_EXTRA_PACKAGES: ${{ inputs.extra_packages }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          set -euo pipefail
+
+          version="${INPUT_VERSION:-}"
+          variants="${INPUT_VARIANTS:-}"
+          extra_packages="${INPUT_EXTRA_PACKAGES:-}"
+          prerelease="${INPUT_PRERELEASE:-}"
+          publish_release="${INPUT_PUBLISH_RELEASE:-}"
+
+          if [ -f config/build.env ]; then
+            # shellcheck disable=SC1091
+            . config/build.env
+          fi
+
+          case "$variants" in
+            '全部变体') variants='all' ;;
+            '仅标准包') variants='base' ;;
+            '仅常用包') variants='plus' ;;
+            '仅自用旁路由包') variants='bypass' ;;
+            '标准包 + 常用包') variants='base plus' ;;
+            '标准包 + 自用旁路由包') variants='base bypass' ;;
+            '常用包 + 自用旁路由包') variants='plus bypass' ;;
+          esac
+          case "$publish_release" in
+            '发布到 GitHub Releases') publish_release='true' ;;
+            '只生成 Actions Artifacts') publish_release='false' ;;
+          esac
+          case "$prerelease" in
+            '正式发布') prerelease='false' ;;
+            '标记为预发布') prerelease='true' ;;
+          esac
+
+          release_series="${IMMORTALWRT_RELEASE_SERIES:-25.12}"
+          target="${IMMORTALWRT_TARGET:-rockchip/armv8}"
+          profile="${IMMORTALWRT_PROFILE:-friendlyarm_nanopi-r2s}"
+          device_name="${IMMORTALWRT_DEVICE_NAME:-nanopi-r2s}"
+          default_variants="${IMMORTALWRT_VARIANTS:-base plus bypass}"
+          base_rootfs_partsize="${IMMORTALWRT_BASE_ROOTFS_PARTSIZE:-1280}"
+          plus_rootfs_partsize="${IMMORTALWRT_PLUS_ROOTFS_PARTSIZE:-2048}"
+          bypass_rootfs_partsize="${IMMORTALWRT_BYPASS_ROOTFS_PARTSIZE:-4096}"
+
+          if [ -z "$variants" ] || [ "$variants" = 'all' ]; then
+            variants="$default_variants"
+          fi
+          if [ -z "$prerelease" ]; then
+            prerelease='false'
+          fi
+          if [ -z "$publish_release" ]; then
+            publish_release='true'
+          fi
+
+          case "$prerelease" in
+            true|false) ;;
+            *) echo "Invalid prerelease value: $prerelease" >&2; exit 1 ;;
+          esac
+          case "$publish_release" in
+            true|false) ;;
+            *) echo "Invalid publish_release value: $publish_release" >&2; exit 1 ;;
+          esac
+
+          variants=$(printf '%s' "$variants" | tr ',;' '  ' | xargs)
+          [ -n "$variants" ] || { echo 'No variants selected.' >&2; exit 1; }
+          variants=$(printf '%s' "$variants" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | xargs)
+          for variant in $variants; do
+            case "$variant" in
+              base|plus|bypass) ;;
+              *) echo "Unsupported variant: $variant" >&2; exit 1 ;;
+            esac
+          done
+
+          for item in \
+            "base:$base_rootfs_partsize" \
+            "plus:$plus_rootfs_partsize" \
+            "bypass:$bypass_rootfs_partsize"; do
+            variant_name="${item%%:*}"
+            partsize="${item#*:}"
+            case "$partsize" in
+              ''|*[!0-9]*) echo "Invalid rootfs partsize for ${variant_name}: ${partsize}" >&2; exit 1 ;;
+            esac
+            if [ "$partsize" -lt 256 ]; then
+              echo "Invalid rootfs partsize for ${variant_name}: ${partsize}." >&2
+              exit 1
+            fi
+          done
+
+          if [ -z "$version" ]; then
+            escaped_series=$(printf '%s' "$release_series" | sed 's/[.[\*^$()+?{}|]/\\&/g')
+            versions=$(
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 120 "$DOWNLOAD_BASE/" |
+                grep -Eo "href=\"${escaped_series}\.[0-9]+/\"" |
+                sed -E 's#href="([^"]+)/"#\1#' |
+                sort -V
+            )
+            version=$(printf '%s\n' "$versions" | tail -n 1)
+          fi
+          [ -n "$version" ] || { echo 'Unable to resolve an ImmortalWrt 25.12 release version.' >&2; exit 1; }
+          case "$version" in
+            "$release_series".*) ;;
+            *) echo "Version ${version} is outside the configured ${release_series} series." >&2; exit 1 ;;
+          esac
+
+          target_dash=${target//\//-}
+          release_url="$DOWNLOAD_BASE/$version/targets/$target"
+
+          matrix=$(python3 - "$variants" "$base_rootfs_partsize" "$plus_rootfs_partsize" "$bypass_rootfs_partsize" <<'PY'
+          import json
+          import sys
+
+          variants = sys.argv[1].split()
+          sizes = {
+              'base': sys.argv[2],
+              'plus': sys.argv[3],
+              'bypass': sys.argv[4],
+          }
+          include = []
+          for variant in variants:
+              include.append({
+                  'variant': variant,
+                  'rootfs_partsize': sizes[variant],
+                  'suffix': '' if variant == 'base' else f'-{variant}',
+              })
+          print(json.dumps({'include': include}, separators=(',', ':')))
+          PY
+          )
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release_series=$release_series" >> "$GITHUB_OUTPUT"
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "target_dash=$target_dash" >> "$GITHUB_OUTPUT"
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "device_name=$device_name" >> "$GITHUB_OUTPUT"
+          echo "release_url=$release_url" >> "$GITHUB_OUTPUT"
+          echo "variants=$variants" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "extra_packages=$extra_packages" >> "$GITHUB_OUTPUT"
+          echo "publish_release=$publish_release" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "base_rootfs_partsize=$base_rootfs_partsize" >> "$GITHUB_OUTPUT"
+          echo "plus_rootfs_partsize=$plus_rootfs_partsize" >> "$GITHUB_OUTPUT"
+          echo "bypass_rootfs_partsize=$bypass_rootfs_partsize" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.variant }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install host tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bzip2 ca-certificates coreutils curl file findutils gawk git gzip jq libncurses-dev \
+            libssl-dev parted pigz python3 rsync squashfs-tools tar unzip util-linux wget xz-utils zstd
+          sudo timedatectl set-timezone Asia/Shanghai
+
+      - name: Download and verify ImageBuilder
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET_DASH: ${{ needs.prepare.outputs.target_dash }}
+          RELEASE_URL: ${{ needs.prepare.outputs.release_url }}
+        run: |
+          set -euo pipefail
+          imagebuilder="immortalwrt-imagebuilder-${VERSION}-${TARGET_DASH}.Linux-x86_64.tar.zst"
+
+          curl -fsSLO --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 300 "$RELEASE_URL/sha256sums"
+          curl -fsSLO --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 900 "$RELEASE_URL/$imagebuilder"
+          grep " \*$imagebuilder$" sha256sums | sha256sum -c -
+          tar --zstd -xf "$imagebuilder"
+          mv "${imagebuilder%.tar.zst}" imagebuilder
+
+      - name: Prepare custom files
+        id: custom_files
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+          LUCKY_LOCAL_PACKAGE: ${{ env.LUCKY_LOCAL_PACKAGE }}
+          LUCKY_INSTALL_DIR: ${{ env.LUCKY_INSTALL_DIR }}
+          LUCKY_SERVICE_NAME: ${{ env.LUCKY_SERVICE_NAME }}
+        run: |
+          set -euo pipefail
+
+          overlay="openwrt-files-${VARIANT}"
+          rm -rf "$overlay"
+          mkdir -p "$overlay"
+
+          if [ "$VARIANT" = 'plus' ] || [ "$VARIANT" = 'bypass' ]; then
+            cp -a files/plus/. "$overlay"/
+          fi
+
+          if [ "$VARIANT" = 'bypass' ]; then
+            cp -a files/bypass/. "$overlay"/
+            cp -a files/lucky/. "$overlay"/
+
+            lucky_tmp="$(mktemp -d)"
+            trap 'rm -rf "$lucky_tmp"' EXIT
+            [ -f "$LUCKY_LOCAL_PACKAGE" ] || { echo "Local Lucky package is missing: ${LUCKY_LOCAL_PACKAGE}" >&2; exit 1; }
+            cp -v "$LUCKY_LOCAL_PACKAGE" "$lucky_tmp/lucky.tar.gz"
+            sha256sum "$lucky_tmp/lucky.tar.gz"
+
+            lucky_dir="${overlay}${LUCKY_INSTALL_DIR}"
+            mkdir -p "$lucky_dir"
+            tar -xzf "$lucky_tmp/lucky.tar.gz" -C "$lucky_dir"
+            test -x "$lucky_dir/lucky" || chmod 0755 "$lucky_dir/lucky"
+            if [ -d "$lucky_dir/scripts" ]; then
+              find "$lucky_dir/scripts" -type f -exec chmod 0755 {} +
+            fi
+
+            mkdir -p "$overlay/etc/rc.d"
+            ln -s "../init.d/${LUCKY_SERVICE_NAME}" "$overlay/etc/rc.d/S99${LUCKY_SERVICE_NAME}"
+          fi
+
+          if [ -d "$overlay/etc/uci-defaults" ]; then
+            find "$overlay/etc/uci-defaults" -type f -exec chmod 0755 {} +
+          fi
+          if [ -d "$overlay/etc/init.d" ]; then
+            find "$overlay/etc/init.d" -type f -exec chmod 0755 {} +
+          fi
+
+          if [ -n "$(find "$overlay" -mindepth 1 -print -quit)" ]; then
+            echo "openwrt_files=../$overlay" >> "$GITHUB_OUTPUT"
+          else
+            echo 'openwrt_files=' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build ImmortalWrt images
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+          EXTRA_PACKAGES: ${{ needs.prepare.outputs.extra_packages }}
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+          ROOTFS_PARTSIZE: ${{ matrix.rootfs_partsize }}
+          OPENWRT_FILES: ${{ steps.custom_files.outputs.openwrt_files }}
+        run: |
+          set -euo pipefail
+
+          read_packages() {
+            local file="$1"
+            if [ -f "$file" ]; then
+              sed -E 's/[[:space:]]*#.*$//' "$file" | xargs
+            fi
+          }
+
+          variant_packages() {
+            local variant="$1"
+            local base_packages plus_packages bypass_packages
+            base_packages=$(read_packages packages/base.txt)
+            plus_packages=$(read_packages packages/plus.txt)
+            bypass_packages=$(read_packages packages/bypass.txt)
+            case "$variant" in
+              base) printf '%s' "$base_packages" ;;
+              plus) printf '%s %s %s' "$base_packages" "$plus_packages" "$EXTRA_PACKAGES" ;;
+              bypass) printf '%s %s %s %s' "$base_packages" "$plus_packages" "$bypass_packages" "$EXTRA_PACKAGES" ;;
+            esac | xargs
+          }
+
+          variant_needs_apk_force_overwrite() {
+            case " $1 " in
+              *' luci-app-openvpn-server '*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          enable_apk_force_overwrite() {
+            if grep -qF '$(APK) add --force-overwrite --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)' Makefile; then
+              return 0
+            fi
+            if ! grep -qF '$(APK) add --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)' Makefile; then
+              echo 'Unable to find ImageBuilder APK install command to patch.' >&2
+              exit 1
+            fi
+            cp Makefile Makefile.apk-force-overwrite.bak
+            sed -i 's#$(APK) add --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)#$(APK) add --force-overwrite --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)#' Makefile
+            echo 'Enabled apk --force-overwrite for this variant.'
+          }
+
+          ensure_local_apk_repository() {
+            if ! grep -qE '(^APK:=|\$\(APK\))' Makefile; then
+              echo 'Local APK packages require an APK-based ImageBuilder.' >&2
+              exit 1
+            fi
+            if grep -qF -- '--repository $(PACKAGE_DIR)/packages.adb' Makefile; then
+              return 0
+            fi
+            if ! grep -qF -- '--repositories-file $(TOPDIR)/repositories' Makefile; then
+              echo 'Unable to find ImageBuilder APK repository configuration to patch.' >&2
+              exit 1
+            fi
+
+            local tmp_makefile
+            tmp_makefile=$(mktemp)
+            awk '
+              {
+                print
+                if ($0 ~ /--repositories-file \$\(TOPDIR\)\/repositories/) {
+                  print "\t--repository $(PACKAGE_DIR)/packages.adb \\"
+                  patched = 1
+                }
+              }
+              END { if (!patched) exit 1 }
+            ' Makefile > "$tmp_makefile" || {
+              rm -f "$tmp_makefile"
+              echo 'Unable to patch ImageBuilder local APK repository support.' >&2
+              exit 1
+            }
+            mv "$tmp_makefile" Makefile
+            echo 'Patched ImageBuilder local APK repository support.'
+          }
+
+          resolve_arch_packages() {
+            local arch_packages
+            arch_packages=''
+
+            if [ -f .config ]; then
+              arch_packages=$(sed -n -E 's/^CONFIG_TARGET_ARCH_PACKAGES="?([^"]*)"?$/\1/p' .config | head -n 1 | xargs)
+            fi
+
+            if [ -z "$arch_packages" ]; then
+              arch_packages=$(sed -n -E 's/^[[:space:]]*ARCH_PACKAGES[[:space:]]*:=[[:space:]]*([^$].*)$/\1/p' Makefile | head -n 1 | xargs)
+            fi
+
+            if [ -z "$arch_packages" ]; then
+              arch_packages=$(
+                make -s -f Makefile -pn 2>/dev/null |
+                  sed -n -E 's/^ARCH_PACKAGES[[:space:]]*:=[[:space:]]*([^$].*)$/\1/p' |
+                  head -n 1 |
+                  xargs
+              )
+            fi
+
+            printf '%s' "$arch_packages"
+          }
+
+          canonical_apk_name() {
+            local source_file base base_no_ext package remainder version
+            source_file="$1"
+            base=$(basename "$source_file")
+            base_no_ext=${base%.apk}
+
+            if [ "$base_no_ext" != "$base" ] && [ "$base_no_ext" != "${base_no_ext#*_}" ]; then
+              package=${base_no_ext%%_*}
+              remainder=${base_no_ext#*_}
+              version=${remainder%%_*}
+              if [ -n "$package" ] && [ -n "$version" ]; then
+                printf '%s-%s.apk' "$package" "$version"
+                return 0
+              fi
+            fi
+
+            printf '%s' "$base"
+          }
+
+          stage_local_apk_file() {
+            local source_file target_name
+            source_file="$1"
+            target_name=$(canonical_apk_name "$source_file")
+            cp -v "$source_file" "packages/${target_name}"
+          }
+
+          stage_local_apks() {
+            local requested_packages="$1"
+            case " $requested_packages " in
+              *' soho-sealhelper '*|*' soho '*|*' luci-app-soho '*) ;;
+              *) return 0 ;;
+            esac
+
+            local local_apk_dir="../packages/local-apk"
+            [ -d "$local_apk_dir" ] || { echo "Local APK directory not found: $local_apk_dir" >&2; exit 1; }
+
+            local arch_packages
+            arch_packages=$(resolve_arch_packages)
+            [ -n "$arch_packages" ] || { echo 'Unable to resolve ImageBuilder ARCH_PACKAGES.' >&2; exit 1; }
+            echo "Resolved ImageBuilder ARCH_PACKAGES: ${arch_packages}"
+
+            mkdir -p packages
+            shopt -s nullglob
+            local luci_soho_apks=("$local_apk_dir"/luci-app-soho-*.apk)
+            local soho_apks=("$local_apk_dir"/soho_*_noarch.apk)
+            local sealhelper_apks=("$local_apk_dir"/soho-sealhelper_*_"${arch_packages}".apk)
+            shopt -u nullglob
+
+            [ "${#luci_soho_apks[@]}" -eq 1 ] || { echo "Expected exactly one luci-app-soho APK, found ${#luci_soho_apks[@]}." >&2; exit 1; }
+            [ "${#soho_apks[@]}" -eq 1 ] || { echo "Expected exactly one noarch soho APK, found ${#soho_apks[@]}." >&2; exit 1; }
+            [ "${#sealhelper_apks[@]}" -eq 1 ] || { echo "Expected exactly one soho-sealhelper APK for ${arch_packages}, found ${#sealhelper_apks[@]}." >&2; exit 1; }
+
+            stage_local_apk_file "${luci_soho_apks[0]}"
+            stage_local_apk_file "${soho_apks[0]}"
+            stage_local_apk_file "${sealhelper_apks[0]}"
+            ensure_local_apk_repository
+          }
+
+          packages=$(variant_packages "$VARIANT")
+          cd imagebuilder
+          stage_local_apks "$packages"
+          if variant_needs_apk_force_overwrite "$packages"; then
+            enable_apk_force_overwrite
+          fi
+
+          make image PROFILE="$PROFILE" PACKAGES="$packages" ROOTFS_PARTSIZE="$ROOTFS_PARTSIZE" FILES="$OPENWRT_FILES"
+
+          mkdir -p ../built
+          find bin/targets -type f \( -name "*-${PROFILE}-ext4-sysupgrade.img.gz" -o -name "*-${PROFILE}-squashfs-sysupgrade.img.gz" \) -exec cp -v {} ../built/ \;
+          find bin/targets -type f \( -name '*.manifest' -o -name '*.buildinfo' -o -name 'profiles.json' \) -exec cp -v {} ../built/ \;
+          image_count=$(find ../built -maxdepth 1 -type f \( -name "*-${PROFILE}-ext4-sysupgrade.img.gz" -o -name "*-${PROFILE}-squashfs-sysupgrade.img.gz" \) | wc -l | xargs)
+          [ "$image_count" -gt 0 ] || { echo "No image generated for profile ${PROFILE}." >&2; find bin/targets -type f >&2; exit 1; }
+
+      - name: Verify image defaults
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+          LUCKY_INSTALL_DIR: ${{ env.LUCKY_INSTALL_DIR }}
+          LUCKY_SERVICE_NAME: ${{ env.LUCKY_SERVICE_NAME }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t images < <(find built -maxdepth 1 -type f \( -name "*-${PROFILE}-ext4-sysupgrade.img.gz" -o -name "*-${PROFILE}-squashfs-sysupgrade.img.gz" \) | sort)
+          [ "${#images[@]}" -gt 0 ] || { echo 'No built .img.gz image found.' >&2; exit 1; }
+
+          tmpdir=$(mktemp -d)
+          loop_dev=''
+          mount_dir=''
+          cleanup() {
+            if [ -n "$mount_dir" ]; then
+              sudo umount "$mount_dir" 2>/dev/null || true
+            fi
+            if [ -n "$loop_dev" ]; then
+              sudo losetup -d "$loop_dev" 2>/dev/null || true
+            fi
+            rm -rf "$tmpdir"
+          }
+          trap cleanup EXIT
+
+          package_installed() {
+            local package_name="$1"
+
+            if sudo test -f "$mount_dir/lib/apk/db/installed" &&
+              sudo grep -qxF "P:${package_name}" "$mount_dir/lib/apk/db/installed"; then
+              return 0
+            fi
+            if sudo test -f "$mount_dir/usr/lib/opkg/status" &&
+              sudo awk -v pkg="$package_name" '$1 == "Package:" && $2 == pkg { found = 1 } END { exit found ? 0 : 1 }' \
+                "$mount_dir/usr/lib/opkg/status"; then
+              return 0
+            fi
+            return 1
+          }
+
+          mount_rootfs_partition() {
+            local image="$1"
+            local part fstype
+
+            mount_dir="$tmpdir/mnt"
+            mkdir -p "$mount_dir"
+            loop_dev=$(sudo losetup -P -f --show --read-only "$image")
+            sudo partprobe "$loop_dev" 2>/dev/null || true
+            sleep 2
+
+            while read -r part fstype; do
+              [ -n "$part" ] || continue
+              [ "$part" != "$loop_dev" ] || continue
+              case "$fstype" in
+                ext4|squashfs|btrfs) ;;
+                *) continue ;;
+              esac
+              if sudo mount -o ro "$part" "$mount_dir" 2>/dev/null; then
+                if sudo test -f "$mount_dir/etc/os-release"; then
+                  return 0
+                fi
+                sudo umount "$mount_dir" 2>/dev/null || true
+              fi
+            done < <(lsblk -nrpo PATH,FSTYPE "$loop_dev")
+
+            echo "Unable to locate a mountable rootfs partition in ${image}." >&2
+            return 1
+          }
+
+          for image_gz in "${images[@]}"; do
+            image="$tmpdir/$(basename "${image_gz%.gz}")"
+            gzip -dc "$image_gz" > "$image"
+            mount_rootfs_partition "$image"
+
+            bypass_sysupgrade_script="$mount_dir/etc/uci-defaults/96-bypass-sysupgrade"
+            bypass_script="$mount_dir/etc/uci-defaults/99-bypass-router"
+            plus_sysupgrade_script="$mount_dir/etc/uci-defaults/97-plus-sysupgrade"
+            lucky_dir="$mount_dir${LUCKY_INSTALL_DIR}"
+            lucky_service="$mount_dir/etc/init.d/${LUCKY_SERVICE_NAME}"
+            lucky_defaults="$mount_dir/etc/uci-defaults/98-lucky-daji"
+            lucky_rc="$mount_dir/etc/rc.d/S99${LUCKY_SERVICE_NAME}"
+
+            if [ "$VARIANT" = 'base' ]; then
+              if sudo test -e "$plus_sysupgrade_script" || sudo test -e "$bypass_sysupgrade_script"; then
+                echo 'Sysupgrade preservation script leaked into base image.' >&2
+                exit 1
+              fi
+            else
+              sudo test -f "$plus_sysupgrade_script" || { echo 'Plus sysupgrade preservation script is missing.' >&2; exit 1; }
+              sudo test -x "$plus_sysupgrade_script" || { echo 'Plus sysupgrade preservation script is not executable.' >&2; exit 1; }
+              sudo /bin/sh -n "$plus_sysupgrade_script"
+              for preserved_path in \
+                /etc/openvpn/ \
+                /etc/easy-rsa/pki/ \
+                /etc/easy-rsa/vars-server \
+                /etc/openvpn-addon.conf; do
+                sudo grep -qF "$preserved_path" "$plus_sysupgrade_script" || {
+                  echo "Plus sysupgrade preservation script is missing ${preserved_path}." >&2
+                  exit 1
+                }
+              done
+              if sudo grep -qF '/etc/soho/' "$plus_sysupgrade_script"; then
+                echo 'Soho preservation leaked into plus sysupgrade script.' >&2
+                exit 1
+              fi
+              echo "Verified plus sysupgrade preservation script in ${VARIANT}: $(basename "$image_gz")"
+            fi
+
+            if [ "$VARIANT" = 'bypass' ]; then
+              sudo test -f "$bypass_sysupgrade_script" || { echo 'Bypass sysupgrade preservation script is missing.' >&2; exit 1; }
+              sudo test -x "$bypass_sysupgrade_script" || { echo 'Bypass sysupgrade preservation script is not executable.' >&2; exit 1; }
+              sudo /bin/sh -n "$bypass_sysupgrade_script"
+              sudo grep -qF '/etc/soho/' "$bypass_sysupgrade_script" || { echo 'Bypass sysupgrade preservation script is missing /etc/soho/.' >&2; exit 1; }
+              for local_package in soho-sealhelper soho luci-app-soho; do
+                package_installed "$local_package" || {
+                  echo "Local Soho package is missing from bypass: ${local_package}" >&2
+                  exit 1
+                }
+              done
+              sudo test -f "$bypass_script" || { echo 'Bypass defaults script is missing from bypass image.' >&2; exit 1; }
+              sudo test -x "$bypass_script" || { echo 'Bypass defaults script is not executable.' >&2; exit 1; }
+              sudo /bin/sh -n "$bypass_script"
+              sudo grep -qF "uci set network.lan.ipaddr='10.11.11.3'" "$bypass_script" || { echo 'Bypass script does not set LAN bypass IP.' >&2; exit 1; }
+              sudo grep -qF 'disable_interface wan' "$bypass_script" || { echo 'Bypass script does not disable WAN.' >&2; exit 1; }
+              sudo test -x "$lucky_dir/lucky" || { echo 'Lucky binary is missing or not executable in bypass image.' >&2; exit 1; }
+              sudo test -x "$lucky_service" || { echo 'Lucky init script is missing or not executable in bypass image.' >&2; exit 1; }
+              sudo test -x "$lucky_defaults" || { echo 'Lucky first-boot defaults script is missing or not executable in bypass image.' >&2; exit 1; }
+              sudo test -L "$lucky_rc" || { echo 'Lucky rc.d autostart symlink is missing in bypass image.' >&2; exit 1; }
+              sudo /bin/sh -n "$lucky_service"
+              sudo /bin/sh -n "$lucky_defaults"
+              echo "Verified bypass defaults, Soho packages, and Lucky: $(basename "$image_gz")"
+            else
+              if sudo test -e "$bypass_sysupgrade_script"; then
+                echo 'Bypass sysupgrade preservation script leaked into a non-bypass image.' >&2
+                exit 1
+              fi
+              if sudo test -e "$bypass_script"; then
+                echo 'Bypass defaults script leaked into a non-bypass image.' >&2
+                exit 1
+              fi
+              for local_package in soho-sealhelper soho luci-app-soho; do
+                if package_installed "$local_package"; then
+                  echo "Local Soho package leaked into non-bypass image: ${local_package}" >&2
+                  exit 1
+                fi
+              done
+              if sudo test -e "$lucky_dir" || sudo test -e "$lucky_service" || sudo test -e "$lucky_defaults"; then
+                echo 'Lucky files leaked into a non-bypass image.' >&2
+                exit 1
+              fi
+              echo "Verified no bypass-only files in ${VARIANT}: $(basename "$image_gz")"
+            fi
+
+            sudo umount "$mount_dir"
+            sudo losetup -d "$loop_dev"
+            loop_dev=''
+            mount_dir=''
+            rm -f "$image"
+          done
+
+      - name: Collect variant artifacts
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+          SUFFIX: ${{ matrix.suffix }}
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+
+          while IFS= read -r src; do
+            filename=$(basename "$src")
+            dest="${filename%.img.gz}${SUFFIX}.img.gz"
+            cp -v "$src" "release/$dest"
+          done < <(find built -maxdepth 1 -type f \( -name "*-${PROFILE}-ext4-sysupgrade.img.gz" -o -name "*-${PROFILE}-squashfs-sysupgrade.img.gz" \) | sort)
+
+          [ -n "$(find release -maxdepth 1 -type f -name '*.img.gz' -print -quit)" ] || { echo 'No release images were collected.' >&2; exit 1; }
+          (cd release && sha256sum * > "sha256sums-${VARIANT}.txt")
+
+      - name: Upload variant artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: immortalwrt-r2s-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-24.04
+    if: always() && needs.prepare.result == 'success' && needs.build.result == 'success'
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        id: artifacts
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          VARIANTS: ${{ needs.prepare.outputs.variants }}
+          BASE_ROOTFS_PARTSIZE: ${{ needs.prepare.outputs.base_rootfs_partsize }}
+          PLUS_ROOTFS_PARTSIZE: ${{ needs.prepare.outputs.plus_rootfs_partsize }}
+          BYPASS_ROOTFS_PARTSIZE: ${{ needs.prepare.outputs.bypass_rootfs_partsize }}
+          DEVICE_NAME: ${{ needs.prepare.outputs.device_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find artifacts -type f -exec cp -v {} release/ \;
+          rm -f release/sha256sums.txt release/sha256sums-*.txt
+
+          printf '%s\n' "$VARIANTS" > release/variants.txt
+          cat > release/rootfs-partsize.txt <<EOF
+          base=${BASE_ROOTFS_PARTSIZE}MiB
+          plus=${PLUS_ROOTFS_PARTSIZE}MiB
+          bypass=${BYPASS_ROOTFS_PARTSIZE}MiB
+          EOF
+          (cd release && sha256sum * > sha256sums.txt)
+
+          release_date=$(TZ=Asia/Shanghai date +%Y.%m.%d)
+          tag="immortalwrt-${VERSION}-${DEVICE_NAME}-${release_date}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "title=ImmortalWrt ${VERSION} NanoPi R2S ${release_date}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload combined artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifacts.outputs.tag }}
+          path: release/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: needs.prepare.outputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.artifacts.outputs.tag }}
+          name: ${{ steps.artifacts.outputs.title }}
+          prerelease: ${{ needs.prepare.outputs.prerelease }}
+          make_latest: true
+          overwrite_files: true
+          files: release/*
+          body: |
+            基于官方 ImmortalWrt `${{ needs.prepare.outputs.version }}` 的 `${{ needs.prepare.outputs.target }} ${{ needs.prepare.outputs.profile }}` ImageBuilder 生成 NanoPi R2S 固件。
+
+            - Device: `${{ needs.prepare.outputs.device_name }}`
+            - Target/Profile: `${{ needs.prepare.outputs.target }} ${{ needs.prepare.outputs.profile }}`
+            - Variants: `${{ needs.prepare.outputs.variants }}`
+            - Rootfs partition: base `${{ needs.prepare.outputs.base_rootfs_partsize }} MiB`, plus `${{ needs.prepare.outputs.plus_rootfs_partsize }} MiB`, bypass `${{ needs.prepare.outputs.bypass_rootfs_partsize }} MiB`
+
+            变体说明：
+
+            - 标准包：不带特殊后缀，使用官方 NanoPi R2S profile 默认包，不写入旁路由配置。
+            - `*-plus.*`：在标准包基础上追加 `packages/plus.txt` 和手动输入的 `extra_packages`。
+            - `*-bypass.*`：在 `plus` 基础上追加 `packages/bypass.txt`、`files/bypass` 下的旁路由首启配置，并内置 Lucky 到 `/etc/lucky.daji`。该变体固定使用 LAN 口作为旁路由接入口，并禁用 WAN/WAN6。
+
+            校验文件：`sha256sums.txt`。分区配置记录：`rootfs-partsize.txt`。
