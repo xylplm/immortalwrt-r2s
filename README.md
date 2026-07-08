@@ -80,6 +80,8 @@ Soho 相关 APK 放在 [packages/local-apk](packages/local-apk)，只会进入 `
 
 NanoPi R2S 的 LAN 口是原生千兆口，`bypass` 固件固定使用官方 `lan` 接口作为旁路由接入口，并禁用 `wan/wan6`。刷入 `bypass` 固件后，建议把网线接在 R2S 的 LAN 口。
 
+脚本带有首启标记 `r2s_bypass_defaults`。首次应用后会写入标记；后续通过 sysupgrade 并选择保留配置时，不会再次覆盖已经存在的网络配置。
+
 默认旁路由参数：
 
 | 项目 | 值 |
@@ -107,7 +109,7 @@ Lucky 只会内置到 `bypass` 固件。
 | 默认账号 | `666` |
 | 默认密码 | `666` |
 
-构建时直接使用 [packages/lucky](packages/lucky) 中的本地 arm64 包，不在 Actions 中实时下载。
+构建时直接使用 [packages/lucky](packages/lucky) 中的本地 arm64 包，不在 Actions 中实时下载。OpenWrt init 脚本来自 Lucky 安装包内置的 `scripts/luckyservice`，构建时复制为 `/etc/init.d/lucky.daji`。
 
 ## 默认登录信息
 

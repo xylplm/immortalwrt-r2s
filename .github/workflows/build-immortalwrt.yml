@@ -305,6 +305,11 @@ jobs:
               find "$lucky_dir/scripts" -type f -exec chmod 0755 {} +
             fi
 
+            test -f "$lucky_dir/scripts/luckyservice" || { echo 'Lucky OpenWrt init script is missing from local package.' >&2; exit 1; }
+            mkdir -p "$overlay/etc/init.d"
+            cp -v "$lucky_dir/scripts/luckyservice" "$overlay/etc/init.d/${LUCKY_SERVICE_NAME}"
+            chmod 0755 "$overlay/etc/init.d/${LUCKY_SERVICE_NAME}"
+
             mkdir -p "$overlay/etc/rc.d"
             ln -s "../init.d/${LUCKY_SERVICE_NAME}" "$overlay/etc/rc.d/S99${LUCKY_SERVICE_NAME}"
           fi
@@ -629,8 +634,11 @@ jobs:
               sudo /bin/sh -n "$bypass_script"
               sudo grep -qF "uci set network.lan.ipaddr='10.11.11.3'" "$bypass_script" || { echo 'Bypass script does not set LAN bypass IP.' >&2; exit 1; }
               sudo grep -qF 'disable_interface wan' "$bypass_script" || { echo 'Bypass script does not disable WAN.' >&2; exit 1; }
+              sudo grep -qF 'r2s_bypass_defaults' "$bypass_script" || { echo 'Bypass script is missing the first-boot marker guard.' >&2; exit 1; }
               sudo test -x "$lucky_dir/lucky" || { echo 'Lucky binary is missing or not executable in bypass image.' >&2; exit 1; }
               sudo test -x "$lucky_service" || { echo 'Lucky init script is missing or not executable in bypass image.' >&2; exit 1; }
+              sudo grep -qF 'SERVICE_DAEMONIZE=1' "$lucky_service" || { echo 'Lucky init script does not match bundled OpenWrt service style.' >&2; exit 1; }
+              sudo grep -qF 'service_start $BIN -c $CONF' "$lucky_service" || { echo 'Lucky init script does not start Lucky like the bundled service.' >&2; exit 1; }
               sudo test -x "$lucky_defaults" || { echo 'Lucky first-boot defaults script is missing or not executable in bypass image.' >&2; exit 1; }
               sudo test -L "$lucky_rc" || { echo 'Lucky rc.d autostart symlink is missing in bypass image.' >&2; exit 1; }
               sudo /bin/sh -n "$lucky_service"

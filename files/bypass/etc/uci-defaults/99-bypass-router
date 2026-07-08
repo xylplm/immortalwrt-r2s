@@ -3,6 +3,10 @@
 # First-boot bypass-router defaults for NanoPi R2S.
 # The bypass image intentionally uses the official LAN interface and disables WAN.
 
+if [ "$(uci -q get system.@system[0].r2s_bypass_defaults)" = '1' ]; then
+    exit 0
+fi
+
 find_firewall_zone() {
     local name="$1"
     local index=0
@@ -90,6 +94,7 @@ fi
 
 uci set system.@system[0].timezone='CST-8'
 uci set system.@system[0].zonename='Asia/Shanghai'
+uci set system.@system[0].r2s_bypass_defaults='1'
 
 if grep -q '^net.ipv4.ip_forward=' /etc/sysctl.conf 2>/dev/null; then
     sed -i 's/^net.ipv4.ip_forward=.*/net.ipv4.ip_forward=1/' /etc/sysctl.conf
