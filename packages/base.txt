@@ -1,2 +1,5 @@
 # Variant 1: official minimal image.
 # Keep empty unless the official NanoPi R2S profile needs an additional package.
+luci-i18n-cpufreq-zh-cn
+luci-i18n-firewall-zh-cn
+luci-i18n-package-manager-zh-cn

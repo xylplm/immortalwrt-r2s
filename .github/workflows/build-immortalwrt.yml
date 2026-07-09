@@ -283,6 +283,10 @@ jobs:
           rm -rf "$overlay"
           mkdir -p "$overlay"
 
+          if [ -d files/common ]; then
+            cp -a files/common/. "$overlay"/
+          fi
+
           if [ "$VARIANT" = 'plus' ] || [ "$VARIANT" = 'bypass' ]; then
             cp -a files/plus/. "$overlay"/
           fi
@@ -424,6 +428,9 @@ jobs:
               echo 'Local APK packages require an APK-based ImageBuilder.' >&2
               exit 1
             fi
+            # ImmortalWrt 25.12 already wires in --repository $(PACKAGE_DIR)/packages.adb
+            # natively, so this short-circuits. The patch below is belt-and-suspenders for
+            # any older ImageBuilder that lacks the local repository line.
             if grep -qF -- '--repository $(PACKAGE_DIR)/packages.adb' Makefile; then
               return 0
             fi
@@ -556,7 +563,11 @@ jobs:
 
           mkdir -p ../built
           find bin/targets -type f \( -name "*-${PROFILE}-ext4-sysupgrade.img.gz" -o -name "*-${PROFILE}-squashfs-sysupgrade.img.gz" \) -exec cp -v {} ../built/ \;
-          find bin/targets -type f \( -name '*.manifest' -o -name '*.buildinfo' -o -name 'profiles.json' \) -exec cp -v {} ../built/ \;
+          # Only the per-profile manifest is useful from the ImageBuilder output.
+          # .buildinfo is never emitted by the rockchip ImageBuilder, and profiles.json
+          # embeds the unrenamed image filenames plus the base default_packages list,
+          # which would disagree with the published (renamed) assets — so neither is collected.
+          find bin/targets -type f -name '*.manifest' -exec cp -v {} ../built/ \;
           image_count=$(find ../built -maxdepth 1 -type f \( -name "*-${PROFILE}-ext4-sysupgrade.img.gz" -o -name "*-${PROFILE}-squashfs-sysupgrade.img.gz" \) | wc -l | xargs)
           [ "$image_count" -gt 0 ] || { echo "No image generated for profile ${PROFILE}." >&2; find bin/targets -type f >&2; exit 1; }
 
@@ -767,6 +778,8 @@ jobs:
       - name: Collect variant artifacts
         shell: bash
         env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DEVICE_NAME: ${{ needs.prepare.outputs.device_name }}
           VARIANT: ${{ matrix.variant }}
           SUFFIX: ${{ matrix.suffix }}
           PROFILE: ${{ needs.prepare.outputs.profile }}
@@ -774,27 +787,26 @@ jobs:
           set -euo pipefail
           mkdir -p release
 
+          # Short device id used in release file names: nanopi-r2s -> r2s.
+          device_short="${DEVICE_NAME#nanopi-}"
+          # Variant tag: base -> none, plus/bypass -> "-plus"/"-bypass".
+          variant_tag="$SUFFIX"
+
           while IFS= read -r src; do
             filename=$(basename "$src")
-            dest="${filename%.img.gz}${SUFFIX}.img.gz"
+            case "$filename" in
+              *ext4-sysupgrade*) fstype=ext4 ;;
+              *squashfs-sysupgrade*) fstype=squashfs ;;
+              *) echo "Unexpected image name: $filename" >&2; exit 1 ;;
+            esac
+            dest="immortalwrt-${VERSION}-${device_short}${variant_tag}-${fstype}-sysupgrade.img.gz"
             cp -v "$src" "release/$dest"
           done < <(find built -maxdepth 1 -type f \( -name "*-${PROFILE}-ext4-sysupgrade.img.gz" -o -name "*-${PROFILE}-squashfs-sysupgrade.img.gz" \) | sort)
 
           while IFS= read -r src; do
-            filename=$(basename "$src")
-            dest="${filename%.manifest}${SUFFIX}.manifest"
+            dest="immortalwrt-${VERSION}-${device_short}${variant_tag}.manifest"
             cp -v "$src" "release/$dest"
           done < <(find built -maxdepth 1 -type f -name "*-${PROFILE}.manifest" | sort)
-
-          while IFS= read -r src; do
-            filename=$(basename "$src")
-            dest="${filename%.buildinfo}${SUFFIX}.buildinfo"
-            cp -v "$src" "release/$dest"
-          done < <(find built -maxdepth 1 -type f -name "*-${PROFILE}.buildinfo" | sort)
-
-          if [ -f built/profiles.json ]; then
-            cp -v built/profiles.json "release/profiles${SUFFIX}.json"
-          fi
 
           [ -n "$(find release -maxdepth 1 -type f -name '*.img.gz' -print -quit)" ] || { echo 'No release images were collected.' >&2; exit 1; }
           (cd release && sha256sum * > "sha256sums-${VARIANT}.txt")
@@ -875,8 +887,8 @@ jobs:
 
             变体说明：
 
-            - 标准包：不带特殊后缀，使用官方 NanoPi R2S profile 默认包，不写入旁路由配置。
-            - `*-plus.*`：在标准包基础上追加 `packages/plus.txt` 和手动输入的 `extra_packages`。
-            - `*-bypass.*`：在 `plus` 基础上追加 `packages/bypass.txt`、`files/bypass` 下的旁路由首启配置，并内置 Lucky 到 `/etc/lucky.daji`。该变体固定使用 LAN 口作为旁路由接入口，并禁用 WAN/WAN6。
+            - 标准包：不带 `plus`/`bypass` 标记，使用官方 NanoPi R2S profile 默认包，不写入旁路由配置。
+            - `*-plus-*`：在标准包基础上追加 `packages/plus.txt` 和手动输入的 `extra_packages`。
+            - `*-bypass-*`：在 `plus` 基础上追加 `packages/bypass.txt`、`files/bypass` 下的旁路由首启配置，并内置 Lucky 到 `/etc/lucky.daji`。该变体固定使用 LAN 口作为旁路由接入口，并禁用 WAN/WAN6。
 
             校验文件：`sha256sums.txt`。分区配置记录：`rootfs-partsize.txt`。

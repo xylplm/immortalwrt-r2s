@@ -2,5 +2,8 @@
 # Add one common package per line. Bypass images inherit this list.
 luci-theme-argon
 luci-app-argon-config
+luci-i18n-argon-config-zh-cn
 luci-app-wol
+luci-i18n-wol-zh-cn
 luci-app-openvpn-server
+luci-i18n-openvpn-server-zh-cn
