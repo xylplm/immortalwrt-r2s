@@ -10,8 +10,8 @@ Soho 官方 APK 安装顺序为 `soho-sealhelper`、`soho`、`luci-app-soho`。`
 
 | 包 | 文件 | 说明 |
 | --- | --- | --- |
-| `soho-sealhelper` | `soho-sealhelper_2.0.12-r6_aarch64_generic.apk` | 架构相关包，文件名里的架构必须匹配 ImageBuilder 的 `ARCH_PACKAGES` |
-| `soho` | `soho_2.0.12-r8_noarch.apk` | 通用包 |
-| `luci-app-soho` | `luci-app-soho-2.0.12-r22.apk` | LuCI 界面包 |
+| `soho-sealhelper` | `soho-sealhelper-2.0.13-r1_aarch64_generic.apk` | 架构相关包，文件名里的架构必须匹配 ImageBuilder 的 `ARCH_PACKAGES` |
+| `soho` | `soho-2.0.13-r1.apk` | 通用包 |
+| `luci-app-soho` | `luci-app-soho-2.0.13-r1.apk` | LuCI 界面包 |
 
 更新版本时请保持每个包只保留一个 APK 文件；workflow 会检查数量，避免误把旧版本一起打进固件。

@@ -484,7 +484,7 @@ jobs:
           }
 
           canonical_apk_name() {
-            local source_file base base_no_ext package remainder version
+            local source_file base base_no_ext package remainder version versioned
             source_file="$1"
             base=$(basename "$source_file")
             base_no_ext=${base%.apk}
@@ -498,6 +498,15 @@ jobs:
                 return 0
               fi
             fi
+
+            case "$base_no_ext" in
+              soho-sealhelper-*_*_*)
+                versioned=${base_no_ext#soho-sealhelper-}
+                versioned=${versioned%%_*}
+                printf 'soho-sealhelper-%s.apk' "$versioned"
+                return 0
+                ;;
+            esac
 
             printf '%s' "$base"
           }
@@ -536,7 +545,10 @@ jobs:
               "$local_apk_dir"/soho_[0-9]*_all.apk
               "$local_apk_dir"/soho-[0-9]*.apk
             )
-            local sealhelper_apks=("$local_apk_dir"/soho-sealhelper_*_"${arch_packages}".apk)
+            local sealhelper_apks=(
+              "$local_apk_dir"/soho-sealhelper_*_"${arch_packages}".apk
+              "$local_apk_dir"/soho-sealhelper-*_*_"${arch_packages}".apk
+            )
             shopt -u nullglob
 
             [ "${#luci_soho_apks[@]}" -eq 1 ] || { echo "Expected exactly one luci-app-soho APK, found ${#luci_soho_apks[@]}." >&2; exit 1; }
