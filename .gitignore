@@ -13,3 +13,4 @@ sha256sums
 *.buildinfo
 openwrt-files-*/
 .tmp/
+/.zcode/plans
