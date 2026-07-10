@@ -547,7 +547,7 @@ jobs:
             )
             local sealhelper_apks=(
               "$local_apk_dir"/soho-sealhelper_*_"${arch_packages}".apk
-              "$local_apk_dir"/soho-sealhelper-*_*_"${arch_packages}".apk
+              "$local_apk_dir"/soho-sealhelper-*_"${arch_packages}".apk
             )
             shopt -u nullglob
 
