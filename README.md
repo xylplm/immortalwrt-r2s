@@ -14,8 +14,8 @@
 - [支持设备](#支持设备)
 - [固件变体](#固件变体)
 - [内置内容](#内置内容)
-- [旁路由配置](#旁路由配置)
-- [Lucky](#lucky)
+- [旁路由配置（仅 bypass）](#旁路由配置仅-bypass)
+- [Lucky（仅 bypass）](#lucky仅-bypass)
 - [默认登录信息](#默认登录信息)
 - [使用方式](#使用方式)
 - [仓库结构](#仓库结构)
@@ -49,9 +49,9 @@
 | --- | --- | --- | --- | --- |
 | 标准包 | 无特殊后缀 | `192.168.1.1` | 1280 MiB | 官方 profile 默认内容，不写入额外配置 |
 | 常用包 | `*-plus-*` | `192.168.1.1` | 2048 MiB | 在标准包基础上追加 `packages/plus.txt` |
-| 旁路由包 | `*-bypass-*` | `10.11.11.3` | 4096 MiB | 在 plus 基础上追加 `packages/bypass.txt`、旁路由配置和 Lucky |
+| 旁路由包 | `*-bypass-*` | `10.11.11.3` | 4096 MiB | 作者自用包；在 plus 基础上追加 `packages/bypass.txt`、旁路由配置和 Lucky |
 
-标准包保持精简；日常使用建议优先选择标准包或 `plus`。`bypass` 是固定旁路由环境的自用配置包，使用前请确认地址、网关、DNS 与自己的网络一致。
+标准包保持精简；日常使用建议优先选择标准包或 `plus`。`bypass` 是作者固定旁路由环境的自用配置包，使用前请确认地址、网关、DNS 与自己的网络一致。
 
 ## 内置内容
 
@@ -74,7 +74,7 @@
 
 Soho 相关 APK 放在 [packages/local-apk](packages/local-apk)，只会进入 `bypass` 固件。Lucky 本地包放在 [packages/lucky](packages/lucky)，同样只会进入 `bypass` 固件。
 
-## 旁路由配置
+## 旁路由配置（仅 bypass）
 
 旁路由首启脚本位于 [files/bypass/etc/uci-defaults/99-bypass-router](files/bypass/etc/uci-defaults/99-bypass-router)，只会写入 `bypass` 固件。
 
@@ -96,7 +96,7 @@ NanoPi R2S 的 LAN 口是原生千兆口，`bypass` 固件固定使用官方 `la
 
 该脚本不会修改 root 密码。
 
-## Lucky
+## Lucky（仅 bypass）
 
 Lucky 只会内置到 `bypass` 固件。
 
