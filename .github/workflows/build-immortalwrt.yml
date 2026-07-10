@@ -489,6 +489,15 @@ jobs:
             base=$(basename "$source_file")
             base_no_ext=${base%.apk}
 
+            case "$base_no_ext" in
+              soho-sealhelper-*_*_*)
+                versioned=${base_no_ext#soho-sealhelper-}
+                versioned=${versioned%%_*}
+                printf 'soho-sealhelper-%s.apk' "$versioned"
+                return 0
+                ;;
+            esac
+
             if [ "$base_no_ext" != "$base" ] && [ "$base_no_ext" != "${base_no_ext#*_}" ]; then
               package=${base_no_ext%%_*}
               remainder=${base_no_ext#*_}
@@ -498,15 +507,6 @@ jobs:
                 return 0
               fi
             fi
-
-            case "$base_no_ext" in
-              soho-sealhelper-*_*_*)
-                versioned=${base_no_ext#soho-sealhelper-}
-                versioned=${versioned%%_*}
-                printf 'soho-sealhelper-%s.apk' "$versioned"
-                return 0
-                ;;
-            esac
 
             printf '%s' "$base"
           }
