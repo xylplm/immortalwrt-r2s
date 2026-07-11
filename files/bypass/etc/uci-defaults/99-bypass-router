@@ -1,7 +1,8 @@
 #!/bin/sh
 
 # First-boot bypass-router defaults for NanoPi R2S.
-# The bypass image intentionally uses the official LAN interface and disables WAN.
+# Uplink uses the native SoC Ethernet (board silkscreen WAN / kernel eth0).
+# The USB Ethernet (board silkscreen LAN / kernel eth1) is left unused/disabled.
 
 if [ "$(uci -q get system.@system[0].r2s_bypass_defaults)" = '1' ]; then
     exit 0
@@ -24,19 +25,38 @@ find_firewall_zone() {
     return 1
 }
 
-ensure_lan_device() {
-    local candidate
+find_network_device() {
+    local name="$1"
+    local index=0
+    local dev
 
-    if [ -n "$(uci -q get network.lan.device)" ] || [ -n "$(uci -q get network.lan.ifname)" ]; then
-        return 0
-    fi
-
-    for candidate in eth0 end0; do
-        if [ -e "/sys/class/net/$candidate" ]; then
-            uci set network.lan.device="$candidate"
+    while uci -q get "network.@device[$index]" >/dev/null; do
+        dev="$(uci -q get "network.@device[$index].name")"
+        if [ "$dev" = "$name" ]; then
+            printf '@device[%s]\n' "$index"
             return 0
         fi
+        index=$((index + 1))
     done
+
+    return 1
+}
+
+ensure_bridge_port() {
+    local bridge_name="$1"
+    local port="$2"
+    local section
+
+    section="$(find_network_device "$bridge_name")"
+    if [ -z "$section" ]; then
+        uci add network device >/dev/null
+        section='@device[-1]'
+        uci set "network.${section}.name=$bridge_name"
+        uci set "network.${section}.type=bridge"
+    fi
+    uci set "network.${section}.type=bridge"
+    uci -q delete "network.${section}.ports"
+    uci add_list "network.${section}.ports=$port"
 }
 
 disable_interface() {
@@ -64,9 +84,22 @@ ensure_sysctl() {
     sysctl -w "${key}=${value}" >/dev/null 2>&1 || true
 }
 
-uci -q get network.lan >/dev/null || uci set network.lan='interface'
-ensure_lan_device
+# Native GMAC is eth0 (WAN silkscreen). Prefer it for the bypass uplink.
+# Fall back only if eth0 is missing on some future board revision.
+uplink_if='eth0'
+unused_if='eth1'
+if [ ! -e /sys/class/net/eth0 ] && [ -e /sys/class/net/end0 ]; then
+    uplink_if='end0'
+fi
+if [ ! -e "/sys/class/net/${uplink_if}" ] && [ -e /sys/class/net/eth1 ]; then
+    # Last resort: USB port if native NIC is absent.
+    uplink_if='eth1'
+    unused_if='eth0'
+fi
 
+uci -q get network.lan >/dev/null || uci set network.lan='interface'
+ensure_bridge_port br-lan "$uplink_if"
+uci set network.lan.device='br-lan'
 uci set network.lan.proto='static'
 uci set network.lan.ipaddr='10.11.11.3'
 uci set network.lan.netmask='255.255.255.0'
@@ -78,6 +111,13 @@ uci add_list network.lan.dns='119.29.29.29'
 uci -q delete network.lan.ip6assign
 uci -q delete network.globals.ula_prefix
 
+# Keep logical wan/wan6 disabled; park them on the unused USB NIC so eth0 stays free.
+if uci -q get network.wan >/dev/null; then
+    uci set network.wan.device="$unused_if"
+fi
+if uci -q get network.wan6 >/dev/null; then
+    uci set network.wan6.device="$unused_if"
+fi
 disable_interface wan
 disable_interface wan6
 
@@ -112,13 +152,21 @@ uci set system.@system[0].timezone='CST-8'
 uci set system.@system[0].zonename='Asia/Shanghai'
 uci set system.@system[0].r2s_bypass_defaults='1'
 
+# LED mapping follows board silkscreen: WAN LED = eth0, LAN LED = eth1
+if uci -q get system.led_wan >/dev/null; then
+    uci set system.led_wan.dev='eth0'
+fi
+if uci -q get system.led_lan >/dev/null; then
+    uci set system.led_lan.dev='eth1'
+fi
+
 ensure_sysctl net.ipv4.ip_forward 1
 ensure_sysctl net.ipv4.conf.all.send_redirects 0
 ensure_sysctl net.ipv4.conf.default.send_redirects 0
 ensure_sysctl net.ipv4.conf.all.accept_redirects 0
 ensure_sysctl net.ipv4.conf.default.accept_redirects 0
 
-for iface in br-lan eth1; do
+for iface in br-lan eth0 eth1; do
     [ -e "/proc/sys/net/ipv4/conf/${iface}" ] || continue
     sysctl -w "net.ipv4.conf.${iface}.send_redirects=0" >/dev/null 2>&1 || true
     sysctl -w "net.ipv4.conf.${iface}.accept_redirects=0" >/dev/null 2>&1 || true

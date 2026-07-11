@@ -845,6 +845,7 @@ jobs:
               sudo /bin/sh -n "$bypass_script"
               sudo grep -qF "uci set network.lan.ipaddr='10.11.11.3'" "$bypass_script" || { echo 'Bypass script does not set LAN bypass IP.' >&2; exit 1; }
               sudo grep -qF 'disable_interface wan' "$bypass_script" || { echo 'Bypass script does not disable WAN.' >&2; exit 1; }
+              sudo grep -qE "ports=.*eth0|ports='eth0'|add_list network\..*\.ports=.?eth0" "$bypass_script" || { echo 'Bypass script does not bind br-lan to native eth0 uplink.' >&2; exit 1; }
               sudo grep -qF 'r2s_bypass_defaults' "$bypass_script" || { echo 'Bypass script is missing the first-boot marker guard.' >&2; exit 1; }
               sudo test -x "$lucky_dir/lucky" || { echo 'Lucky binary is missing or not executable in bypass image.' >&2; exit 1; }
               sudo test -x "$lucky_service" || { echo 'Lucky init script is missing or not executable in bypass image.' >&2; exit 1; }
@@ -1023,6 +1024,6 @@ jobs:
 
             - 标准包：不带 `plus`/`bypass` 标记，使用官方 NanoPi R2S profile 默认包，不写入旁路由配置。
             - `*-plus-*`：在标准包基础上追加 `packages/plus.txt` 和手动输入的 `extra_packages`。
-            - `*-bypass-*`：在 `plus` 基础上追加 `packages/bypass.txt`、`files/bypass` 下的旁路由首启配置，并内置 Lucky 到 `/etc/lucky.daji`。该变体固定使用 LAN 口作为旁路由接入口，并禁用 WAN/WAN6。
+            - `*-bypass-*`：在 `plus` 基础上追加 `packages/bypass.txt`、`files/bypass` 下的旁路由首启配置，并内置 Lucky 到 `/etc/lucky.daji`。该变体固定使用原生 WAN 口（`eth0`）作为旁路由上联，并禁用逻辑 WAN/WAN6。
 
             校验文件：`sha256sums.txt`。分区配置记录：`rootfs-partsize.txt`。

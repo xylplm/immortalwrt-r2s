@@ -79,7 +79,14 @@ Soho 相关 APK 放在 [packages/local-apk](packages/local-apk)，只会进入 `
 
 旁路由首启脚本位于 [files/bypass/etc/uci-defaults/99-bypass-router](files/bypass/etc/uci-defaults/99-bypass-router)，只会写入 `bypass` 固件。
 
-NanoPi R2S 的 LAN 口走 USB 千兆网卡（内核 `eth1`/`r8152`），`bypass` 固件固定使用官方 `lan` 接口作为旁路由接入口，并禁用 `wan/wan6`。刷入 `bypass` 固件后，建议把网线接在 R2S 的 LAN 口。
+NanoPi R2S 有两个千兆口：
+
+| 板子丝印 | 内核网卡 | 硬件 | bypass 用途 |
+| --- | --- | --- | --- |
+| **WAN** | `eth0` | SoC 原生 GMAC | **旁路由上联（默认）** |
+| **LAN** | `eth1` | USB RTL815x | 预留/禁用 |
+
+`bypass` 固件默认把管理口 `lan`（`br-lan`）绑到原生 **`eth0`（WAN 口）**，并禁用逻辑 `wan/wan6`（停在 USB 的 `eth1` 上）。刷入后请把网线插在 R2S 的 **WAN** 口接主路由。
 
 脚本带有首启标记 `r2s_bypass_defaults`。首次应用后会写入标记；后续通过 sysupgrade 并选择保留配置时，不会再次覆盖已经存在的网络配置。
 
@@ -90,8 +97,9 @@ NanoPi R2S 的 LAN 口走 USB 千兆网卡（内核 `eth1`/`r8152`），`bypass`
 | 管理地址 | `10.11.11.3/24` |
 | 网关 | `10.11.11.1` |
 | DNS | `10.11.11.1`、`119.29.29.29` |
+| 上联网口 | 原生 `eth0`（板子丝印 **WAN**） |
 | DHCP | 关闭 LAN DHCP、DHCPv6 和 RA |
-| WAN | 禁用 `wan/wan6` |
+| WAN | 禁用 `wan/wan6`（逻辑接口停在 `eth1`） |
 | LAN 防火墙 | 允许转发；开启 IP 动态伪装（masquerade） |
 | 时区 | `Asia/Shanghai` |
 | IPv4 转发 | 开启 |
@@ -201,7 +209,7 @@ Lucky 只会内置到 `bypass` 固件。
 ## 注意事项
 
 - 请确认设备是 NanoPi R2S，不要刷入到 NanoPi R2S Plus 或其他相近设备。
-- `bypass` 固件会禁用 WAN/WAN6，并固定使用 LAN 口作为旁路由接入口。
+- `bypass` 固件会禁用逻辑 WAN/WAN6，并固定使用原生 **WAN 口（eth0）** 作为旁路由上联；板子丝印 LAN 口（USB eth1）默认不使用。
 - `bypass` 固件默认管理地址为 `10.11.11.3`，刷写前请确认不会和现有网络冲突。
 - 首次启动时会为仍为空的 root 密码设置默认值 `password`；首次登录后请立即修改。
 - 刷写、升级或扩容前请自行备份配置和重要数据。
