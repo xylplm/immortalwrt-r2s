@@ -52,6 +52,7 @@ concurrency:
 
 env:
   DOWNLOAD_BASE: https://downloads.immortalwrt.org/releases
+  MIHOMO_API_URL: https://api.github.com/repos/MetaCubeX/mihomo/releases/latest
   LUCKY_LOCAL_PACKAGE: packages/lucky/lucky_3.0.0_Linux_arm64_xiaojv_waf.tar.gz
   LUCKY_INSTALL_DIR: /etc/lucky.daji
   LUCKY_SERVICE_NAME: lucky.daji
@@ -273,6 +274,7 @@ jobs:
         shell: bash
         env:
           VARIANT: ${{ matrix.variant }}
+          MIHOMO_API_URL: ${{ env.MIHOMO_API_URL }}
           LUCKY_LOCAL_PACKAGE: ${{ env.LUCKY_LOCAL_PACKAGE }}
           LUCKY_INSTALL_DIR: ${{ env.LUCKY_INSTALL_DIR }}
           LUCKY_SERVICE_NAME: ${{ env.LUCKY_SERVICE_NAME }}
@@ -293,6 +295,56 @@ jobs:
 
           if [ "$VARIANT" = 'bypass' ]; then
             cp -a files/bypass/. "$overlay"/
+            mihomo_tmp="${overlay}/usr/bin/mihomo"
+            mkdir -p "$(dirname "$mihomo_tmp")"
+            mihomo_work="$(mktemp -d)"
+            trap 'rm -rf "$mihomo_work"' EXIT
+            mihomo_json="$mihomo_work/release.json"
+            mihomo_archive="$mihomo_work/mihomo-arm64.gz"
+            mihomo_download="$mihomo_work/mihomo"
+
+            if curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 120 \
+              -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "$MIHOMO_API_URL" -o "$mihomo_json"; then
+              mihomo_tag=$(jq -r '.tag_name // empty' "$mihomo_json")
+              mihomo_asset=$(jq -r --arg tag "$mihomo_tag" '.assets[] | select(.name == ("mihomo-linux-arm64-v1" + $tag + ".gz")) | .browser_download_url' "$mihomo_json" | head -n 1)
+              mihomo_digest=$(jq -r --arg tag "$mihomo_tag" '.assets[] | select(.name == ("mihomo-linux-arm64-v1" + $tag + ".gz")) | .digest' "$mihomo_json" | head -n 1)
+              case "$mihomo_tag" in
+                v[0-9]*.[0-9]*.[0-9]*) ;;
+                *) mihomo_asset=''; mihomo_digest='' ;;
+              esac
+            else
+              mihomo_tag=''
+              mihomo_asset=''
+              mihomo_digest=''
+            fi
+
+            if [ -n "$mihomo_asset" ] && [ -n "$mihomo_digest" ] && [[ "$mihomo_digest" == sha256:* ]]; then
+              echo "Downloading latest stable mihomo ${mihomo_tag}: ${mihomo_asset}"
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 900 \
+                "$mihomo_asset" -o "$mihomo_archive"
+              echo "${mihomo_digest#sha256:*}  $mihomo_archive" | sha256sum -c -
+              gzip -dc "$mihomo_archive" > "$mihomo_download"
+              chmod 0700 "$mihomo_download"
+            else
+              echo 'Unable to download the latest stable mihomo ARM64 binary.' >&2
+              exit 1
+            fi
+
+            mihomo_sha256=$(sha256sum "$mihomo_download" | awk '{print $1}')
+            mihomo_version=$("$mihomo_download" -v 2>&1 | head -n 1)
+            printf '%s\n' "$mihomo_version" | grep -qF "${mihomo_tag#v}" || {
+              echo "Unexpected mihomo version: ${mihomo_version} (expected ${mihomo_tag})" >&2
+              exit 1
+            }
+            cp -v "$mihomo_download" "$mihomo_tmp"
+            chmod 0700 "$mihomo_tmp"
+            echo "Embedded mihomo: ${mihomo_version} (${mihomo_sha256})"
+            echo "mihomo_version=${mihomo_tag}" >> "$GITHUB_OUTPUT"
+            echo "mihomo_sha256=${mihomo_sha256}" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$VARIANT" = 'bypass' ]; then
             cp -a files/lucky/. "$overlay"/
 
             lucky_tmp="$(mktemp -d)"
@@ -588,6 +640,8 @@ jobs:
         env:
           VARIANT: ${{ matrix.variant }}
           PROFILE: ${{ needs.prepare.outputs.profile }}
+          MIHOMO_VERSION_FILE: ${{ steps.custom_files.outputs.mihomo_version }}
+          MIHOMO_SHA256_FILE: ${{ steps.custom_files.outputs.mihomo_sha256 }}
           LUCKY_INSTALL_DIR: ${{ env.LUCKY_INSTALL_DIR }}
           LUCKY_SERVICE_NAME: ${{ env.LUCKY_SERVICE_NAME }}
         run: |
@@ -751,6 +805,15 @@ jobs:
               sudo grep -qF 'service_start $BIN -c $CONF' "$lucky_service" || { echo 'Lucky init script does not start Lucky like the bundled service.' >&2; exit 1; }
               sudo test -x "$lucky_defaults" || { echo 'Lucky first-boot defaults script is missing or not executable in bypass image.' >&2; exit 1; }
               sudo test -L "$lucky_rc" || { echo 'Lucky rc.d autostart symlink is missing in bypass image.' >&2; exit 1; }
+              sudo test -x "$mount_dir/usr/bin/mihomo" || { echo 'Embedded mihomo binary is missing or not executable in bypass image.' >&2; exit 1; }
+              mihomo_sha256=$(sudo sha256sum "$mount_dir/usr/bin/mihomo" | awk '{print $1}')
+              [ "$mihomo_sha256" = "$MIHOMO_SHA256_FILE" ] || { echo "Embedded mihomo SHA256 mismatch: expected ${MIHOMO_SHA256_FILE}, got ${mihomo_sha256}." >&2; exit 1; }
+              mihomo_version=$(sudo "$mount_dir/usr/bin/mihomo" -v 2>&1 | head -n 1)
+              if [ "$MIHOMO_VERSION_FILE" = 'local-fallback' ]; then
+                printf '%s\n' "$mihomo_version" | grep -Eq 'Mihomo .* v[0-9]+\.[0-9]+\.[0-9]+' || { echo "Unexpected local mihomo version: ${mihomo_version}" >&2; exit 1; }
+              else
+                printf '%s\n' "$mihomo_version" | grep -qF "${MIHOMO_VERSION_FILE#v}" || { echo "Unexpected embedded mihomo version: ${mihomo_version}" >&2; exit 1; }
+              fi
               sudo /bin/sh -n "$lucky_service"
               sudo /bin/sh -n "$lucky_defaults"
               echo "Verified bypass defaults, Soho packages, and Lucky: $(basename "$image_gz")"

@@ -3,3 +3,4 @@
 soho-sealhelper
 soho
 luci-app-soho
+kmod-inet-diag

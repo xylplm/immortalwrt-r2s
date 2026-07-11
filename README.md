@@ -71,6 +71,7 @@
 - `soho-sealhelper`
 - `soho`
 - `luci-app-soho`
+- `kmod-inet-diag`
 
 Soho 相关 APK 放在 [packages/local-apk](packages/local-apk)，只会进入 `bypass` 固件。Lucky 本地包放在 [packages/lucky](packages/lucky)，同样只会进入 `bypass` 固件。
 
@@ -111,7 +112,20 @@ Lucky 只会内置到 `bypass` 固件。
 
 构建时直接使用 [packages/lucky](packages/lucky) 中的本地 arm64 包，不在 Actions 中实时下载。OpenWrt init 脚本来自 Lucky 安装包内置的 `scripts/luckyservice`，构建时复制为 `/etc/init.d/lucky.daji`。
 
-## 默认登录信息
+## Mihomo 内核（仅 bypass）
+
+`bypass` 固件会在 GitHub Actions 打包时自动查询 [Mihomo 最新稳定版](https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)，下载 `linux-arm64` 官方压缩包，校验 GitHub API 返回的 SHA256 摘要，解压后内置到 `/usr/bin/mihomo`。设备首次启动不需要访问 GitHub；SOHO 内核页面仍可在设备运行后继续在线升级。
+
+| 项目 | 值 |
+| --- | --- |
+| 文件 | `/usr/bin/mihomo` |
+| 版本 | 每次打包时自动使用最新正式版 |
+| 架构 | `linux arm64`（适配设备 `aarch64`） |
+| 构建范围 | 仅 `bypass`；标准包和 `plus` 不包含 |
+
+如果最新内核下载失败，`bypass` 构建会直接终止，避免把过期内核打进固件。
+
+构建流程会在打包前检查下载资产的 SHA256 和 `mihomo -v` 版本，并在生成镜像后再次校验。每次构建的具体 Mihomo 版本和 SHA256 会显示在 Actions 日志中。
 
 本项目会在首次启动且 root 密码仍为空时设置默认密码为 `password`。如果通过 sysupgrade 保留配置，或用户已经设置过 root 密码，则不会覆盖现有密码。
 
@@ -178,6 +192,7 @@ Lucky 只会内置到 `bypass` 固件。
 - 修改 bypass 专用包：编辑 [packages/bypass.txt](packages/bypass.txt)。
 - 修改旁路由默认地址、网关或 DNS：编辑 [99-bypass-router](files/bypass/etc/uci-defaults/99-bypass-router)。
 - 更新 Lucky：替换 [packages/lucky](packages/lucky) 中的 tar.gz 文件，并同步 workflow 中的 `LUCKY_LOCAL_PACKAGE` 文件名。
+- 更新 Mihomo 内核策略：workflow 每次自动下载最新稳定版，无需手动替换仓库文件。
 - 更新 Soho 本地包：替换 [packages/local-apk](packages/local-apk) 中对应 APK，并确保同一包只保留一个版本。
 
 ## 注意事项
