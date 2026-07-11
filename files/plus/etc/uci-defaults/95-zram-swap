@@ -1,0 +1,24 @@
+#!/bin/sh
+
+# Peak-memory safety net for 1GB NanoPi R2S (plus/bypass).
+# zram only compresses when pages are swapped; idle cost is near zero.
+
+[ -x /etc/init.d/zram ] || exit 0
+[ -f /etc/config/system ] || exit 0
+
+# 256 MiB virtual swap is enough for short spikes without encouraging thrash.
+uci set system.@system[0].zram_size_mb='256'
+
+# Prefer lz4 when the kernel build provides it; otherwise keep lzo.
+if [ -r /sys/block/zram0/comp_algorithm ] && grep -q 'lz4' /sys/block/zram0/comp_algorithm; then
+	uci set system.@system[0].zram_comp_algo='lz4'
+else
+	uci set system.@system[0].zram_comp_algo='lzo'
+fi
+
+uci set system.@system[0].zram_priority='100'
+uci commit system
+
+/etc/init.d/zram enable 2>/dev/null || true
+
+exit 0

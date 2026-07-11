@@ -63,6 +63,7 @@
 - `luci-app-argon-config`
 - `luci-app-wol`
 - `luci-app-openvpn-server`
+- `kmod-zram` / `zram-swap`（尖峰内存兜底）
 
 OpenVPN 说明（`plus` / `bypass`）：
 
@@ -70,6 +71,12 @@ OpenVPN 说明（`plus` / `bypass`）：
 - 固件默认开启 `duplicate_cn`（同证书多设备同时在线），方便个人一证多用。
 - 首启脚本：[files/plus/etc/uci-defaults/98-openvpn-duplicate-cn](files/plus/etc/uci-defaults/98-openvpn-duplicate-cn)。
 - 默认最多约 10 路并发（`max_clients`）；仅适合自用，证书泄露会影响所有共用设备。
+
+zram 说明（`plus` / `bypass`）：
+
+- 默认启用 **256 MiB** 压缩内存交换，仅在内存紧张发生换页时压缩，低负载几乎不占 CPU。
+- 首启脚本：[files/plus/etc/uci-defaults/95-zram-swap](files/plus/etc/uci-defaults/95-zram-swap)。
+- 这是防 OOM 的兜底，不是用来长期硬撑超大代理配置的。
 
 ### 仅 bypass 内置
 
