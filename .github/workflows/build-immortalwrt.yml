@@ -53,6 +53,7 @@ concurrency:
 env:
   DOWNLOAD_BASE: https://downloads.immortalwrt.org/releases
   MIHOMO_API_URL: https://api.github.com/repos/MetaCubeX/mihomo/releases/latest
+  GEODATA_BASE_URL: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest
   LUCKY_LOCAL_PACKAGE: packages/lucky/lucky_3.0.0_Linux_arm64_xiaojv_waf.tar.gz
   LUCKY_INSTALL_DIR: /etc/lucky.daji
   LUCKY_SERVICE_NAME: lucky.daji
@@ -275,6 +276,7 @@ jobs:
         env:
           VARIANT: ${{ matrix.variant }}
           MIHOMO_API_URL: ${{ env.MIHOMO_API_URL }}
+          GEODATA_BASE_URL: ${{ env.GEODATA_BASE_URL }}
           LUCKY_LOCAL_PACKAGE: ${{ env.LUCKY_LOCAL_PACKAGE }}
           LUCKY_INSTALL_DIR: ${{ env.LUCKY_INSTALL_DIR }}
           LUCKY_SERVICE_NAME: ${{ env.LUCKY_SERVICE_NAME }}
@@ -342,13 +344,37 @@ jobs:
             echo "Embedded mihomo: ${mihomo_version} (${mihomo_sha256})"
             echo "mihomo_version=${mihomo_tag}" >> "$GITHUB_OUTPUT"
             echo "mihomo_sha256=${mihomo_sha256}" >> "$GITHUB_OUTPUT"
+
+            # —— 预置 geodata：mihomo 启动时在 /etc/soho/geo/ 查找，避免首次启动在线下载失败 ——
+            geo_dir="${overlay}/etc/soho/geo"
+            mkdir -p "$geo_dir"
+            geo_work="$(mktemp -d)"
+            # Keep previous mihomo_work cleanup and also remove geo_work on exit.
+            trap 'rm -rf "$mihomo_work" "$geo_work"' EXIT
+            geo_files=("geoip.dat:geoip.dat" "geosite.dat:GeoSite.dat" "country.mmdb:country.mmdb" "GeoLite2-ASN.mmdb:ASN.mmdb")
+            for item in "${geo_files[@]}"; do
+              src="${item%%:*}"
+              dst="${item##*:}"
+              url="${GEODATA_BASE_URL}/${src}"
+              if curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 600 \
+                "$url" -o "$geo_work/$dst"; then
+                cp -v "$geo_work/$dst" "$geo_dir/$dst"
+                chmod 0600 "$geo_dir/$dst"
+              else
+                echo "Failed to download geodata: $src" >&2
+                exit 1
+              fi
+            done
+            chmod 0700 "$geo_dir"
+            echo "Embedded geodata: $(ls -1 "$geo_dir")"
           fi
 
           if [ "$VARIANT" = 'bypass' ]; then
             cp -a files/lucky/. "$overlay"/
 
             lucky_tmp="$(mktemp -d)"
-            trap 'rm -rf "$lucky_tmp"' EXIT
+            # Preserve cleanup for mihomo/geo workdirs created earlier in the bypass branch.
+            trap 'rm -rf "${mihomo_work:-}" "${geo_work:-}" "$lucky_tmp"' EXIT
             [ -f "$LUCKY_LOCAL_PACKAGE" ] || { echo "Local Lucky package is missing: ${LUCKY_LOCAL_PACKAGE}" >&2; exit 1; }
             cp -v "$LUCKY_LOCAL_PACKAGE" "$lucky_tmp/lucky.tar.gz"
             sha256sum "$lucky_tmp/lucky.tar.gz"
@@ -814,6 +840,14 @@ jobs:
               else
                 printf '%s\n' "$mihomo_version" | grep -qF "${MIHOMO_VERSION_FILE#v}" || { echo "Unexpected embedded mihomo version: ${mihomo_version}" >&2; exit 1; }
               fi
+              # 验证预置 geodata 文件存在
+              for geo_file in GeoSite.dat geoip.dat country.mmdb ASN.mmdb; do
+                sudo test -s "$mount_dir/etc/soho/geo/$geo_file" || {
+                  echo "Embedded geodata file is missing or empty: /etc/soho/geo/$geo_file" >&2
+                  exit 1
+                }
+              done
+              echo "Verified embedded geodata: $(basename "$image_gz")"
               sudo /bin/sh -n "$lucky_service"
               sudo /bin/sh -n "$lucky_defaults"
               echo "Verified bypass defaults, Soho packages, and Lucky: $(basename "$image_gz")"
@@ -834,6 +868,10 @@ jobs:
               done
               if sudo test -e "$soho_share_dir" || sudo test -e "$mount_dir/etc/init.d/soho" || sudo test -e "$mount_dir/etc/init.d/soho-guard" || sudo test -e "$mount_dir/etc/init.d/soho-web"; then
                 echo 'Soho files leaked into a non-bypass image.' >&2
+                exit 1
+              fi
+              if sudo test -e "$mount_dir/etc/soho/geo"; then
+                echo 'Soho geodata leaked into a non-bypass image.' >&2
                 exit 1
               fi
               if sudo test -e "$lucky_dir" || sudo test -e "$lucky_service" || sudo test -e "$lucky_defaults"; then
