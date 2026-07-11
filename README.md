@@ -77,7 +77,7 @@ zram 说明（`plus` / `bypass`）：
 - 默认启用 **256 MiB** 压缩内存交换，仅在内存紧张发生换页时压缩，低负载几乎不占 CPU。
 - 首启脚本：[files/plus/etc/uci-defaults/95-zram-swap](files/plus/etc/uci-defaults/95-zram-swap)。
 - 这是防 OOM 的兜底，不是用来长期硬撑超大代理配置的。
-- 算法：优先尝试 `lz4`，但 ImmortalWrt 自带的 `zram.ko` 当前通常只编译了 **lzo/lzo-rle**（`modinfo zram` 仅依赖 `lzo_compress/lzo_decompress`）。单独安装 `kmod-lib-lz4` 也**不能**让 zram 用上 lz4，此时会回退到 **lzo**。
+- 压缩算法使用官方预编译 `kmod-zram` 支持的 LZO 系：优先 **`lzo-rle`**，否则回退 **`lzo`**。
 
 ### 仅 bypass 内置
 
