@@ -95,7 +95,10 @@ if [ -n "$lan_zone" ]; then
     uci set firewall."$lan_zone".input='ACCEPT'
     uci set firewall."$lan_zone".output='ACCEPT'
     uci set firewall."$lan_zone".forward='ACCEPT'
-    uci -q delete firewall."$lan_zone".masq
+    # Enable LAN masquerade so OpenVPN/client traffic to LAN devices
+    # gets a reachable source (10.11.11.3). Without this, return path
+    # usually fails because the main router has no route for 10.9.0.0/24.
+    uci set firewall."$lan_zone".masq='1'
 fi
 
 wan_zone="$(find_firewall_zone wan)"

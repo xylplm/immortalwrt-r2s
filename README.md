@@ -79,7 +79,7 @@ Soho 相关 APK 放在 [packages/local-apk](packages/local-apk)，只会进入 `
 
 旁路由首启脚本位于 [files/bypass/etc/uci-defaults/99-bypass-router](files/bypass/etc/uci-defaults/99-bypass-router)，只会写入 `bypass` 固件。
 
-NanoPi R2S 的 LAN 口是原生千兆口，`bypass` 固件固定使用官方 `lan` 接口作为旁路由接入口，并禁用 `wan/wan6`。刷入 `bypass` 固件后，建议把网线接在 R2S 的 LAN 口。
+NanoPi R2S 的 LAN 口走 USB 千兆网卡（内核 `eth1`/`r8152`），`bypass` 固件固定使用官方 `lan` 接口作为旁路由接入口，并禁用 `wan/wan6`。刷入 `bypass` 固件后，建议把网线接在 R2S 的 LAN 口。
 
 脚本带有首启标记 `r2s_bypass_defaults`。首次应用后会写入标记；后续通过 sysupgrade 并选择保留配置时，不会再次覆盖已经存在的网络配置。
 
@@ -92,8 +92,11 @@ NanoPi R2S 的 LAN 口是原生千兆口，`bypass` 固件固定使用官方 `la
 | DNS | `10.11.11.1`、`119.29.29.29` |
 | DHCP | 关闭 LAN DHCP、DHCPv6 和 RA |
 | WAN | 禁用 `wan/wan6` |
+| LAN 防火墙 | 允许转发；开启 IP 动态伪装（masquerade） |
 | 时区 | `Asia/Shanghai` |
 | IPv4 转发 | 开启 |
+
+开启 LAN masquerade 是为了让 OpenVPN 等客户端访问局域网其他设备时有正确回程：内网设备会把应答回给旁路由 `10.11.11.3`，而不是因不认识 `10.9.0.0/24` 而丢包。若主路由已为 VPN 网段配置了静态路由，也可自行关闭该选项。
 
 该脚本不会修改 root 密码。
 
