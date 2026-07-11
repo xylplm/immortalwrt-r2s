@@ -355,14 +355,19 @@ jobs:
             fi
 
             mihomo_sha256=$(sha256sum "$mihomo_download" | awk '{print $1}')
-            mihomo_version=$("$mihomo_download" -v 2>&1 | head -n 1)
-            printf '%s\n' "$mihomo_version" | grep -qF "${mihomo_tag#v}" || {
-              echo "Unexpected mihomo version: ${mihomo_version} (expected ${mihomo_tag})" >&2
+            # Builder hosts are x86_64; the embedded binary is aarch64 and cannot be
+            # executed here (exit 126). Validate ELF architecture instead of running -v.
+            mihomo_file_info=$(file -b "$mihomo_download" 2>/dev/null || true)
+            printf '%s\n' "$mihomo_file_info" | grep -Eqi 'ARM aarch64|ARM64|AArch64' || {
+              echo "Downloaded mihomo is not an aarch64 binary: ${mihomo_file_info:-unknown}" >&2
               exit 1
             }
+            # Release tag is the version source of truth after digest verification.
+            mihomo_version="Mihomo Meta ${mihomo_tag} (aarch64, not executed on builder)"
             cp -v "$mihomo_download" "$mihomo_tmp"
             chmod 0700 "$mihomo_tmp"
-            echo "Embedded mihomo: ${mihomo_version} (${mihomo_sha256})"
+            echo "Embedded mihomo: ${mihomo_tag} (${mihomo_sha256})"
+            echo "file: ${mihomo_file_info}"
             echo "mihomo_version=${mihomo_tag}" >> "$GITHUB_OUTPUT"
             echo "mihomo_sha256=${mihomo_sha256}" >> "$GITHUB_OUTPUT"
 
@@ -858,11 +863,17 @@ jobs:
               sudo test -x "$mount_dir/usr/bin/mihomo" || { echo 'Embedded mihomo binary is missing or not executable in bypass image.' >&2; exit 1; }
               mihomo_sha256=$(sudo sha256sum "$mount_dir/usr/bin/mihomo" | awk '{print $1}')
               [ "$mihomo_sha256" = "$MIHOMO_SHA256_FILE" ] || { echo "Embedded mihomo SHA256 mismatch: expected ${MIHOMO_SHA256_FILE}, got ${mihomo_sha256}." >&2; exit 1; }
-              mihomo_version=$(sudo "$mount_dir/usr/bin/mihomo" -v 2>&1 | head -n 1)
-              if [ "$MIHOMO_VERSION_FILE" = 'local-fallback' ]; then
-                printf '%s\n' "$mihomo_version" | grep -Eq 'Mihomo .* v[0-9]+\.[0-9]+\.[0-9]+' || { echo "Unexpected local mihomo version: ${mihomo_version}" >&2; exit 1; }
+              # Do not execute the aarch64 binary on the x86_64 builder (exit 126).
+              # Digest was verified at download time and must match the embedded file.
+              mihomo_file_info=$(sudo file -b "$mount_dir/usr/bin/mihomo" 2>/dev/null || true)
+              printf '%s\n' "$mihomo_file_info" | grep -Eqi 'ARM aarch64|ARM64|AArch64' || {
+                echo "Embedded mihomo is not an aarch64 binary: ${mihomo_file_info:-unknown}" >&2
+                exit 1
+              }
+              if [ -n "$MIHOMO_VERSION_FILE" ] && [ "$MIHOMO_VERSION_FILE" != 'local-fallback' ]; then
+                echo "Verified embedded mihomo ${MIHOMO_VERSION_FILE} via SHA256 (${mihomo_sha256})"
               else
-                printf '%s\n' "$mihomo_version" | grep -qF "${MIHOMO_VERSION_FILE#v}" || { echo "Unexpected embedded mihomo version: ${mihomo_version}" >&2; exit 1; }
+                echo "Verified embedded mihomo via SHA256 (${mihomo_sha256})"
               fi
               # 验证预置 geodata 文件存在
               for geo_file in GeoSite.dat geoip.dat country.mmdb ASN.mmdb; do
