@@ -1,0 +1,18 @@
+#!/bin/sh
+
+# Allow the same client certificate (client1) to be used by multiple devices
+# at once. luci-app-openvpn-server only ships one downloadable profile; for
+# personal multi-device use, duplicate-cn is the simplest approach.
+
+[ -f /etc/config/openvpn ] || exit 0
+
+if uci -q get openvpn.myvpn >/dev/null; then
+	uci set openvpn.myvpn.duplicate_cn='1'
+	# Keep a reasonable concurrent limit for personal use.
+	if [ -z "$(uci -q get openvpn.myvpn.max_clients)" ]; then
+		uci set openvpn.myvpn.max_clients='10'
+	fi
+	uci commit openvpn
+fi
+
+exit 0

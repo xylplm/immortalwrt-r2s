@@ -64,6 +64,13 @@
 - `luci-app-wol`
 - `luci-app-openvpn-server`
 
+OpenVPN 说明（`plus` / `bypass`）：
+
+- Luci 的 `luci-app-openvpn-server` 页面只会下载同一份 `client1` 配置。
+- 固件默认开启 `duplicate_cn`（同证书多设备同时在线），方便个人一证多用。
+- 首启脚本：[files/plus/etc/uci-defaults/98-openvpn-duplicate-cn](files/plus/etc/uci-defaults/98-openvpn-duplicate-cn)。
+- 默认最多约 10 路并发（`max_clients`）；仅适合自用，证书泄露会影响所有共用设备。
+
 ### 仅 bypass 内置
 
 这些包维护在 [packages/bypass.txt](packages/bypass.txt)：
