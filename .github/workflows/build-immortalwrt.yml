@@ -309,8 +309,24 @@ jobs:
               -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
               "$MIHOMO_API_URL" -o "$mihomo_json"; then
               mihomo_tag=$(jq -r '.tag_name // empty' "$mihomo_json")
-              mihomo_asset=$(jq -r --arg tag "$mihomo_tag" '.assets[] | select(.name == ("mihomo-linux-arm64-v1" + $tag + ".gz")) | .browser_download_url' "$mihomo_json" | head -n 1)
-              mihomo_digest=$(jq -r --arg tag "$mihomo_tag" '.assets[] | select(.name == ("mihomo-linux-arm64-v1" + $tag + ".gz")) | .digest' "$mihomo_json" | head -n 1)
+              # Official asset name is mihomo-linux-arm64-<tag>.gz, e.g. mihomo-linux-arm64-v1.19.28.gz
+              # (older releases sometimes used mihomo-linux-arm64-v1-<tag>.gz for GOARCH level)
+              mihomo_asset=$(jq -r --arg tag "$mihomo_tag" '
+                .assets[]
+                | select(
+                    .name == ("mihomo-linux-arm64-" + $tag + ".gz")
+                    or .name == ("mihomo-linux-arm64-v1-" + $tag + ".gz")
+                  )
+                | .browser_download_url
+              ' "$mihomo_json" | head -n 1)
+              mihomo_digest=$(jq -r --arg tag "$mihomo_tag" '
+                .assets[]
+                | select(
+                    .name == ("mihomo-linux-arm64-" + $tag + ".gz")
+                    or .name == ("mihomo-linux-arm64-v1-" + $tag + ".gz")
+                  )
+                | .digest
+              ' "$mihomo_json" | head -n 1)
               case "$mihomo_tag" in
                 v[0-9]*.[0-9]*.[0-9]*) ;;
                 *) mihomo_asset=''; mihomo_digest='' ;;
@@ -329,7 +345,12 @@ jobs:
               gzip -dc "$mihomo_archive" > "$mihomo_download"
               chmod 0700 "$mihomo_download"
             else
-              echo 'Unable to download the latest stable mihomo ARM64 binary.' >&2
+              echo "Unable to download the latest stable mihomo ARM64 binary." >&2
+              echo "tag=${mihomo_tag:-<empty>} asset=${mihomo_asset:-<empty>} digest=${mihomo_digest:-<empty>}" >&2
+              if [ -f "$mihomo_json" ]; then
+                echo 'Available arm64 assets:' >&2
+                jq -r '.assets[] | select(.name | test("linux-arm64")) | .name' "$mihomo_json" >&2 || true
+              fi
               exit 1
             fi
 
