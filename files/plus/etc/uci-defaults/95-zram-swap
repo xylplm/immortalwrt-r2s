@@ -9,7 +9,10 @@
 # 256 MiB virtual swap is enough for short spikes without encouraging thrash.
 uci set system.@system[0].zram_size_mb='256'
 
-# Prefer lz4 when the kernel build provides it; otherwise keep lzo.
+# Prefer lz4 when zram itself lists it. Note: installing kmod-lib-lz4 alone is
+# not enough if zram.ko was built without LZ4 backend (common on ImmortalWrt:
+# modinfo zram only depends on lzo_compress/lzo_decompress). In that case the
+# init script falls back to lzo automatically.
 if [ -r /sys/block/zram0/comp_algorithm ] && grep -q 'lz4' /sys/block/zram0/comp_algorithm; then
 	uci set system.@system[0].zram_comp_algo='lz4'
 else
