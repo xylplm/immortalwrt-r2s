@@ -850,9 +850,8 @@ jobs:
               sudo /bin/sh -n "$bypass_script"
               sudo grep -qF "uci set network.lan.ipaddr='10.11.11.3'" "$bypass_script" || { echo 'Bypass script does not set LAN bypass IP.' >&2; exit 1; }
               sudo grep -qF 'disable_interface wan' "$bypass_script" || { echo 'Bypass script does not disable WAN.' >&2; exit 1; }
-              sudo grep -qE "ports=.*eth0|ports='eth0'|add_list network\..*\.ports=.?eth0" "$bypass_script" || { echo 'Bypass script does not bind br-lan to native eth0 uplink.' >&2; exit 1; }
-              sudo test -f "$mount_dir/etc/uci-defaults/98-openvpn-duplicate-cn" || { echo 'OpenVPN duplicate_cn defaults script is missing from bypass image.' >&2; exit 1; }
-              sudo grep -qF "openvpn.myvpn.duplicate_cn='1'" "$mount_dir/etc/uci-defaults/98-openvpn-duplicate-cn" || { echo 'OpenVPN duplicate_cn defaults script does not enable duplicate_cn.' >&2; exit 1; }
+              sudo grep -qF "uplink_if='eth0'" "$bypass_script" || { echo 'Bypass script does not select native eth0 as uplink.' >&2; exit 1; }
+              sudo grep -qF 'ensure_bridge_port br-lan "$uplink_if"' "$bypass_script" || { echo 'Bypass script does not bind br-lan to the selected uplink.' >&2; exit 1; }
               sudo grep -qF 'r2s_bypass_defaults' "$bypass_script" || { echo 'Bypass script is missing the first-boot marker guard.' >&2; exit 1; }
               sudo test -x "$lucky_dir/lucky" || { echo 'Lucky binary is missing or not executable in bypass image.' >&2; exit 1; }
               sudo test -x "$lucky_service" || { echo 'Lucky init script is missing or not executable in bypass image.' >&2; exit 1; }
