@@ -297,6 +297,22 @@ jobs:
 
           if [ "$VARIANT" = 'bypass' ]; then
             cp -a files/bypass/. "$overlay"/
+            # Ensure management rescue + boot diagnostics start even after keep-config
+            # upgrades (uci-defaults only run once and may already be consumed).
+            mkdir -p "$overlay/etc/rc.d"
+            if [ -f "$overlay/etc/init.d/r2s-mgmt-rescue" ]; then
+              ln -sf '../init.d/r2s-mgmt-rescue' "$overlay/etc/rc.d/S99r2s-mgmt-rescue"
+              chmod 0755 "$overlay/etc/init.d/r2s-mgmt-rescue"
+            fi
+            if [ -f "$overlay/etc/init.d/r2s-diag" ]; then
+              ln -sf '../init.d/r2s-diag' "$overlay/etc/rc.d/S11r2s-diag"
+              chmod 0755 "$overlay/etc/init.d/r2s-diag"
+            fi
+            for sbin in r2s-check-sysupgrade r2s-sysupgrade r2s-upgrade-log; do
+              if [ -f "$overlay/usr/sbin/$sbin" ]; then
+                chmod 0755 "$overlay/usr/sbin/$sbin"
+              fi
+            done
             mihomo_tmp="${overlay}/usr/bin/mihomo"
             mkdir -p "$(dirname "$mihomo_tmp")"
             mihomo_work="$(mktemp -d)"
@@ -427,6 +443,9 @@ jobs:
           fi
           if [ -d "$overlay/etc/init.d" ]; then
             find "$overlay/etc/init.d" -type f -exec chmod 0755 {} +
+          fi
+          if [ -d "$overlay/usr/sbin" ]; then
+            find "$overlay/usr/sbin" -type f -exec chmod 0755 {} +
           fi
 
           if [ -n "$(find "$overlay" -mindepth 1 -print -quit)" ]; then

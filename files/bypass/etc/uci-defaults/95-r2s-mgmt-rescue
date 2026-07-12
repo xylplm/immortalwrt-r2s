@@ -1,0 +1,6 @@
+#!/bin/sh
+# Enable management-IP rescue service on bypass images.
+
+[ -x /etc/init.d/r2s-mgmt-rescue ] || exit 0
+/etc/init.d/r2s-mgmt-rescue enable 2>/dev/null || true
+exit 0

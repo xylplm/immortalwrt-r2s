@@ -1,0 +1,75 @@
+#!/bin/sh
+# Pre-flight check for keep-config sysupgrade on NanoPi R2S.
+# Exit 0 = OK to keep config; exit 1 = do not keep config / slim first.
+
+MAX_RAW_KB=5120
+MAX_BOOT_NEED_KB=6144
+LOG='/usr/sbin/r2s-upgrade-log'
+
+echo "=== R2S keep-config preflight ==="
+[ -x "$LOG" ] && "$LOG" event preflight-start "r2s-check-sysupgrade" 2>/dev/null || true
+
+echo "-- keep list (soho/lucky) --"
+sysupgrade -l 2>/dev/null | grep -E 'soho|lucky' || echo "(none)"
+
+echo "-- estimated raw backup size --"
+raw_kb="$(
+	sysupgrade -l 2>/dev/null | while read -r f; do
+		[ -e "$f" ] || continue
+		wc -c <"$f" 2>/dev/null
+	done | awk '{s+=$1} END{printf "%d\n", (s+1023)/1024}'
+)"
+echo "raw_kb=${raw_kb} (limit ${MAX_RAW_KB})"
+
+echo "-- fat path scan (should be empty) --"
+bad="$(sysupgrade -l 2>/dev/null | grep -E '/etc/soho/geo/|kernel\.log|app\.log|/etc/lucky\.daji/lucky$|/etc/lucky\.daji/scripts/' || true)"
+if [ -n "$bad" ]; then
+	echo "$bad"
+	echo "ERROR: oversized keep paths present"
+	[ -x "$LOG" ] && "$LOG" event preflight-fail "fat paths present" 2>/dev/null || true
+	[ -x "$LOG" ] && "$LOG" snapshot preflight-fail 2>/dev/null || true
+	exit 1
+fi
+echo "OK: no known fat paths"
+
+echo "-- boot free space --"
+boot_free=""
+if grep -qs ' /mnt/mmcblk0p1 ' /proc/mounts; then
+	boot_free="$(df -k /mnt/mmcblk0p1 2>/dev/null | awk 'NR==2{print $4}')"
+fi
+if [ -z "$boot_free" ] && [ -b /dev/mmcblk0p1 ]; then
+	mkdir -p /tmp/r2s-boot-chk
+	if mount -o ro,noatime /dev/mmcblk0p1 /tmp/r2s-boot-chk 2>/dev/null; then
+		boot_free="$(df -k /tmp/r2s-boot-chk 2>/dev/null | awk 'NR==2{print $4}')"
+		umount /tmp/r2s-boot-chk 2>/dev/null || true
+	fi
+	rmdir /tmp/r2s-boot-chk 2>/dev/null || true
+fi
+echo "boot_free_kb=${boot_free:-unknown} (need roughly < ${MAX_BOOT_NEED_KB} for backup)"
+
+if [ -n "$raw_kb" ] && [ "$raw_kb" -gt "$MAX_RAW_KB" ] 2>/dev/null; then
+	echo "ERROR: raw keep list too large (${raw_kb}KB > ${MAX_RAW_KB}KB)"
+	echo "Fix: remove /etc/soho/ and /etc/lucky.daji/ from /etc/sysupgrade.conf; rely on soho/lucky keep hooks."
+	[ -x "$LOG" ] && "$LOG" event preflight-fail "raw_kb=${raw_kb}" 2>/dev/null || true
+	[ -x "$LOG" ] && "$LOG" snapshot preflight-fail 2>/dev/null || true
+	exit 1
+fi
+
+if [ -n "$boot_free" ] && [ "$raw_kb" -gt 0 ] 2>/dev/null; then
+	# gzip usually shrinks, but account.enc is already compressed-ish; require headroom
+	if [ "$raw_kb" -gt $((boot_free - 2048)) ] 2>/dev/null; then
+		echo "ERROR: backup may not fit boot free space (raw ${raw_kb}KB, free ${boot_free}KB)"
+		[ -x "$LOG" ] && "$LOG" event preflight-fail "boot free ${boot_free} raw ${raw_kb}" 2>/dev/null || true
+		[ -x "$LOG" ] && "$LOG" snapshot preflight-fail 2>/dev/null || true
+		exit 1
+	fi
+fi
+
+echo "OK: keep-config size looks safe"
+[ -x "$LOG" ] && "$LOG" event preflight-ok "raw_kb=${raw_kb} boot_free_kb=${boot_free:-unknown}" 2>/dev/null || true
+echo "Recommended:"
+echo "  r2s-sysupgrade -v /tmp/firmware.bin"
+echo "  (writes diagnostics to boot partition before flashing)"
+echo "If unreachable after reboot, wait ~30s and try http://10.11.11.3/ (mgmt rescue)."
+echo "Offline logs: boot partition r2s-diag/ or /etc/r2s-diag/"
+exit 0

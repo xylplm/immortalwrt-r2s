@@ -1,0 +1,260 @@
+#!/bin/sh
+# Persist upgrade/boot diagnostics for NanoPi R2S bypass images.
+#
+# Why: logread lives in RAM; after a failed keep-config upgrade the box may be
+# unreachable and the TF card is the only evidence left.
+#
+# Write targets (best-effort, small files only):
+#   1) Boot partition  /mnt/mmcblk0p1/r2s-diag/   (survives rootfs rewrite)
+#   2) Overlay         /etc/r2s-diag/              (if root is writable)
+#   3) Always          /tmp/r2s-diag/              (current boot only)
+#
+# Usage:
+#   r2s-upgrade-log event <tag> [message...]
+#   r2s-upgrade-log snapshot <tag>
+#   r2s-upgrade-log pre-upgrade
+#   r2s-upgrade-log post-boot
+#   r2s-upgrade-log rescue <message...>
+#   r2s-upgrade-log show
+
+DIAG_NAME='r2s-diag'
+BOOT_MNT='/mnt/mmcblk0p1'
+BOOT_DIAG="${BOOT_MNT}/${DIAG_NAME}"
+ETC_DIAG="/etc/${DIAG_NAME}"
+TMP_DIAG="/tmp/${DIAG_NAME}"
+MAX_LOG_BYTES=98304
+MAX_SNAP_BYTES=65536
+
+ts() {
+	date '+%F %T' 2>/dev/null || echo 'unknown-time'
+}
+
+ensure_dirs() {
+	mkdir -p "$TMP_DIAG" 2>/dev/null || true
+	mkdir -p "$ETC_DIAG" 2>/dev/null || true
+	if [ -d "$BOOT_MNT" ] || mount_boot_rw; then
+		mkdir -p "$BOOT_DIAG" 2>/dev/null || true
+	fi
+}
+
+mount_boot_rw() {
+	if grep -qs " ${BOOT_MNT} " /proc/mounts; then
+		# remount rw if currently ro
+		mount -o remount,rw "$BOOT_MNT" 2>/dev/null || true
+		return 0
+	fi
+	[ -b /dev/mmcblk0p1 ] || return 1
+	mkdir -p "$BOOT_MNT" 2>/dev/null || true
+	mount -o rw,noatime /dev/mmcblk0p1 "$BOOT_MNT" 2>/dev/null || return 1
+	return 0
+}
+
+trim_file() {
+	local f="$1"
+	local max="${2:-$MAX_LOG_BYTES}"
+	[ -f "$f" ] || return 0
+	local sz
+	sz="$(wc -c <"$f" 2>/dev/null || echo 0)"
+	[ "$sz" -gt "$max" ] 2>/dev/null || return 0
+	tail -c "$max" "$f" >"${f}.trim" 2>/dev/null && mv "${f}.trim" "$f" 2>/dev/null || true
+}
+
+append_all() {
+	local line="$1"
+	local f
+
+	ensure_dirs
+	for f in \
+		"${TMP_DIAG}/events.log" \
+		"${ETC_DIAG}/events.log" \
+		"${BOOT_DIAG}/events.log"
+	do
+		[ -d "$(dirname "$f")" ] || continue
+		echo "$line" >>"$f" 2>/dev/null || true
+		trim_file "$f" "$MAX_LOG_BYTES"
+	done
+	logger -t r2s-upgrade-log "$line" 2>/dev/null || true
+	echo "r2s-upgrade-log: $line" >/dev/kmsg 2>/dev/null || true
+}
+
+write_snapshot_file() {
+	local dest="$1"
+	local tag="$2"
+	local tmp
+
+	[ -n "$dest" ] || return 1
+	mkdir -p "$(dirname "$dest")" 2>/dev/null || return 1
+	tmp="${dest}.tmp.$$"
+
+	{
+		echo "===== r2s snapshot tag=${tag} time=$(ts) ====="
+		echo "-- uname --"
+		uname -a 2>/dev/null
+		echo "-- uptime --"
+		cat /proc/uptime 2>/dev/null
+		uptime 2>/dev/null
+		echo "-- openwrt_release --"
+		cat /etc/openwrt_release 2>/dev/null
+		echo "-- board --"
+		cat /tmp/sysinfo/board_name 2>/dev/null
+		cat /tmp/sysinfo/model 2>/dev/null
+		echo "-- mounts --"
+		mount 2>/dev/null
+		echo "-- df -h --"
+		df -h 2>/dev/null
+		echo "-- free --"
+		free -m 2>/dev/null || free 2>/dev/null
+		echo "-- ip addr --"
+		ip -4 addr 2>/dev/null
+		echo "-- ip route --"
+		ip -4 route 2>/dev/null
+		echo "-- ip link --"
+		ip -brief link 2>/dev/null || ip link 2>/dev/null
+		echo "-- uci network.lan --"
+		uci -q show network.lan 2>/dev/null
+		uci -q show network.@device[0] 2>/dev/null
+		echo "-- r2s_bypass_defaults --"
+		uci -q get system.@system[0].r2s_bypass_defaults 2>/dev/null
+		echo "-- sysupgrade.conf --"
+		cat /etc/sysupgrade.conf 2>/dev/null
+		echo "-- keep list soho/lucky --"
+		sysupgrade -l 2>/dev/null | grep -E 'soho|lucky' || true
+		echo "-- keep raw size KB --"
+		sysupgrade -l 2>/dev/null | while read -r f; do
+			[ -e "$f" ] || continue
+			wc -c <"$f" 2>/dev/null
+		done | awk '{s+=$1} END{printf "%d\n", (s+1023)/1024}'
+		echo "-- fat keep paths --"
+		sysupgrade -l 2>/dev/null | grep -E '/etc/soho/geo/|kernel\.log|app\.log|/etc/lucky\.daji/lucky$|/etc/lucky\.daji/scripts/' || echo '(none)'
+		echo "-- boot partition --"
+		ls -la /mnt/mmcblk0p1 2>/dev/null || true
+		df -k /mnt/mmcblk0p1 2>/dev/null || true
+		echo "-- /tmp upgrade remnants --"
+		ls -la /tmp/sysupgrade* /tmp/firmware.bin /tmp/*.img* 2>/dev/null || true
+		echo "-- soho packages --"
+		apk info -v 2>/dev/null | grep -i soho || true
+		echo "-- soho state files --"
+		ls -la /etc/config/soho /etc/soho 2>/dev/null | head -40
+		echo "-- dmesg tail --"
+		dmesg 2>/dev/null | tail -n 80
+		echo "-- logread tail --"
+		logread 2>/dev/null | tail -n 80
+		echo "-- processes (net/upgrade) --"
+		ps w 2>/dev/null | grep -iE 'sysupgrade|netifd|procd|dropbear|uhttpd|soho|lucky' | grep -v grep || true
+		echo "-- cmdline --"
+		cat /proc/cmdline 2>/dev/null
+		echo "-- partitions --"
+		cat /proc/partitions 2>/dev/null
+		echo "===== end snapshot ${tag} ====="
+	} >"$tmp" 2>/dev/null
+
+	# cap snapshot size
+	if [ -f "$tmp" ]; then
+		sz="$(wc -c <"$tmp" 2>/dev/null || echo 0)"
+		if [ "$sz" -gt "$MAX_SNAP_BYTES" ] 2>/dev/null; then
+			tail -c "$MAX_SNAP_BYTES" "$tmp" >"${tmp}.2" 2>/dev/null && mv "${tmp}.2" "$tmp"
+		fi
+		mv "$tmp" "$dest" 2>/dev/null || rm -f "$tmp"
+	fi
+}
+
+snapshot() {
+	local tag="${1:-snap}"
+	local safe stamp
+
+	safe="$(echo "$tag" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-40)"
+	stamp="$(date '+%Y%m%d-%H%M%S' 2>/dev/null || echo now)"
+	ensure_dirs
+	mount_boot_rw
+
+	write_snapshot_file "${TMP_DIAG}/snap-${safe}-${stamp}.txt" "$safe"
+	write_snapshot_file "${ETC_DIAG}/snap-${safe}-${stamp}.txt" "$safe"
+	write_snapshot_file "${ETC_DIAG}/last-snapshot.txt" "$safe"
+	write_snapshot_file "${BOOT_DIAG}/snap-${safe}-${stamp}.txt" "$safe"
+	write_snapshot_file "${BOOT_DIAG}/last-snapshot.txt" "$safe"
+
+	# keep only a few snapshots on boot (space is tight)
+	if [ -d "$BOOT_DIAG" ]; then
+		ls -1t "$BOOT_DIAG"/snap-*.txt 2>/dev/null | tail -n +6 | while read -r old; do
+			rm -f "$old" 2>/dev/null || true
+		done
+	fi
+	if [ -d "$ETC_DIAG" ]; then
+		ls -1t "$ETC_DIAG"/snap-*.txt 2>/dev/null | tail -n +8 | while read -r old; do
+			rm -f "$old" 2>/dev/null || true
+		done
+	fi
+
+	append_all "$(ts) SNAPSHOT tag=${safe} stamp=${stamp}"
+}
+
+event() {
+	local tag="$1"
+	shift
+	append_all "$(ts) EVENT tag=${tag:-event} $*"
+}
+
+pre_upgrade() {
+	local fw="${1:-}"
+	event pre-upgrade "begin firmware=${fw}"
+	snapshot pre-upgrade
+
+	# copy small evidence next to boot for offline read after brick
+	ensure_dirs
+	mount_boot_rw
+	if [ -d "$BOOT_DIAG" ]; then
+		cp -a /etc/sysupgrade.conf "${BOOT_DIAG}/sysupgrade.conf" 2>/dev/null || true
+		sysupgrade -l 2>/dev/null >"${BOOT_DIAG}/sysupgrade.list" || true
+		{
+			echo "time=$(ts)"
+			echo "firmware=${fw}"
+			echo "raw_kb=$(sysupgrade -l 2>/dev/null | while read -r f; do [ -e "$f" ] && wc -c <"$f"; done | awk '{s+=$1} END{printf "%d", (s+1023)/1024}')"
+			df -k /mnt/mmcblk0p1 2>/dev/null
+			ls -la /tmp/sysupgrade.tgz /tmp/firmware.bin 2>/dev/null
+			wc -c /tmp/sysupgrade.tgz /tmp/firmware.bin 2>/dev/null
+		} >"${BOOT_DIAG}/pre-upgrade-meta.txt" 2>/dev/null || true
+		sync 2>/dev/null || true
+	fi
+	event pre-upgrade "evidence written to ${BOOT_DIAG} and ${ETC_DIAG}"
+}
+
+post_boot() {
+	event post-boot "boot diagnostics"
+	snapshot post-boot
+	# also capture early once more after network settle is caller's job
+}
+
+rescue() {
+	event rescue "$*"
+	snapshot rescue
+}
+
+show() {
+	echo "TMP: $TMP_DIAG"
+	ls -la "$TMP_DIAG" 2>/dev/null || true
+	echo "ETC: $ETC_DIAG"
+	ls -la "$ETC_DIAG" 2>/dev/null || true
+	echo "BOOT: $BOOT_DIAG"
+	ls -la "$BOOT_DIAG" 2>/dev/null || true
+	echo "---- events (boot) ----"
+	tail -n 50 "${BOOT_DIAG}/events.log" 2>/dev/null || true
+	echo "---- events (etc) ----"
+	tail -n 50 "${ETC_DIAG}/events.log" 2>/dev/null || true
+}
+
+cmd="${1:-}"
+[ -n "$cmd" ] && shift
+
+case "$cmd" in
+	event) event "$@" ;;
+	snapshot) snapshot "${1:-snap}" ;;
+	pre-upgrade) pre_upgrade "$@" ;;
+	post-boot) post_boot ;;
+	rescue) rescue "$@" ;;
+	show) show ;;
+	*)
+		echo "Usage: $0 event|snapshot|pre-upgrade|post-boot|rescue|show ..." >&2
+		exit 2
+		;;
+esac
+exit 0

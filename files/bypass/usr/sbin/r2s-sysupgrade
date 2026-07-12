@@ -1,0 +1,46 @@
+#!/bin/sh
+# Wrapper around /sbin/sysupgrade that always writes pre-upgrade diagnostics
+# to boot+overlay before flashing. Prefer this over plain sysupgrade on R2S.
+
+set -u
+
+LOG='/usr/sbin/r2s-upgrade-log'
+CHECK='/usr/sbin/r2s-check-sysupgrade'
+REAL='/sbin/sysupgrade'
+
+if [ ! -x "$REAL" ]; then
+	echo "r2s-sysupgrade: ${REAL} not found" >&2
+	exit 127
+fi
+
+# Parse a few flags to decide whether keep-config is in effect.
+keep=1
+image=''
+for arg in "$@"; do
+	case "$arg" in
+		-n|--no-save) keep=0 ;;
+		-*) ;;
+		*)
+			[ -z "$image" ] && image="$arg"
+			;;
+	esac
+done
+
+if [ -x "$CHECK" ] && [ "$keep" = '1' ]; then
+	echo "r2s-sysupgrade: running keep-config preflight..."
+	if ! "$CHECK"; then
+		echo "r2s-sysupgrade: preflight FAILED; refusing keep-config upgrade." >&2
+		echo "  Fix keep list, or re-run with -n (do not save config)." >&2
+		[ -x "$LOG" ] && "$LOG" event preflight-fail "check failed image=${image}"
+		exit 1
+	fi
+fi
+
+if [ -x "$LOG" ]; then
+	"$LOG" pre-upgrade "${image:-unknown}"
+	"$LOG" event sysupgrade-invoke "args=$* keep=${keep}"
+	sync 2>/dev/null || true
+fi
+
+# Hand off to real sysupgrade (may reboot and never return).
+exec "$REAL" "$@"

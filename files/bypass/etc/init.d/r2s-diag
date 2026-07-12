@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+# Always persist boot diagnostics so a failed keep-config upgrade leaves
+# evidence on the boot partition even when the box is unreachable.
+
+START=11
+STOP=01
+
+boot() {
+	start
+}
+
+start() {
+	[ -x /usr/sbin/r2s-upgrade-log ] || return 0
+	# Non-blocking: snapshot may take a second or two.
+	/usr/sbin/r2s-upgrade-log post-boot >/dev/null 2>&1 &
+	return 0
+}
+
+stop() {
+	return 0
+}

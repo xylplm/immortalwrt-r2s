@@ -225,7 +225,14 @@ Lucky 只会内置到 `bypass` 固件。
 
 R2S 的 boot 分区只有约 **16MB**。升级并勾选「保留配置」时，OpenWrt 会把备份放到该分区，因此备份体积必须远小于 16MB。
 
-本仓库对 `bypass` 的策略是：
+### 为什么“保留配置”容易挂
+
+历史上有两类故障：
+
+1. **备份过大**：把 `/etc/soho/`（含 geo/日志）或 `/etc/lucky.daji/`（含 12MB 二进制）整目录保留，备份 40MB+，写不进 16MB boot，升级中断或恢复残缺。
+2. **配置恢复不完整**：固件已写入，但 overlay/网络 UCI 未完整恢复，设备“像挂了”（其实可能已启动，只是管理地址不是 `10.11.11.3`）。`99-bypass-router` 在标记 `r2s_bypass_defaults=1` 后不会再次改网络，所以需要启动自救。
+
+### 本仓库策略
 
 | 组件 | 会保留 | 不会保留（体积过大或可由固件重建） |
 | --- | --- | --- |
@@ -233,13 +240,66 @@ R2S 的 boot 分区只有约 **16MB**。升级并勾选「保留配置」时，O
 | Lucky | 与 Lucky 官方导出一致：`lucky_*.lkcf`、`lucky.conf`（若存在）、`porttrapdb/`、`statushistorydb/` | `lucky` 二进制、`scripts/`、`ipdb/` 等 |
 | 网络/系统 | 常规 OpenWrt 配置（network、firewall、dropbear 等） | — |
 
-实现位置：
+加固实现：
 
 - [files/bypass/lib/upgrade/soho-conffiles.sh](files/bypass/lib/upgrade/soho-conffiles.sh)
 - [files/lucky/lib/upgrade/lucky-conffiles.sh](files/lucky/lib/upgrade/lucky-conffiles.sh)
-- 首启会清理错误的整目录保留规则：`96-bypass-sysupgrade`、`98-lucky-daji`
+- 首启清理错误整目录规则：`96-bypass-sysupgrade`、`98-lucky-daji`
+- 升级前自检：`/usr/sbin/r2s-check-sysupgrade`
+- 推荐 CLI 升级包装：`/usr/sbin/r2s-sysupgrade`（升级前强制落盘证据）
+- 诊断落盘：`/usr/sbin/r2s-upgrade-log`
+- 启动管理地址自救：`/etc/init.d/r2s-mgmt-rescue`（lan 无 IPv4 时强制回 `10.11.11.3`）
+- 每次开机快照：`/etc/init.d/r2s-diag`
 
-升级前可在设备上自检备份体积（应远小于约 8MB 才稳妥）：
+### 升级失败落盘日志（下次可提取）
+
+`logread` 在内存里，拔卡/断电就没了。本仓库会把**小体积证据**写到两处：
+
+| 位置 | 路径 | 说明 |
+| --- | --- | --- |
+| **boot 分区**（优先） | `/mnt/mmcblk0p1/r2s-diag/` | 刷 rootfs 后仍在；读卡器上通常是第一分区 |
+| overlay | `/etc/r2s-diag/` | root 可写时同步一份 |
+| 当前运行 | `/tmp/r2s-diag/` | 仅当次开机 |
+
+典型文件：
+
+- `events.log`：时间线（preflight / pre-upgrade / post-boot / rescue）
+- `pre-upgrade-meta.txt`：升级前备份体积、boot 剩余、固件路径
+- `sysupgrade.conf` / `sysupgrade.list`：升级前保留列表
+- `snap-*.txt` / `last-snapshot.txt`：网络、挂载、df、dmesg/logread 尾部、soho 包版本等
+- 自救时额外：`snap-rescue-*.txt`、`snap-post-rescue-*.txt`
+
+设备仍可 SSH 时：
+
+```sh
+r2s-upgrade-log show
+ls -la /mnt/mmcblk0p1/r2s-diag/ /etc/r2s-diag/
+```
+
+设备挂了、TF 插读卡器时（Windows 常把 boot 分区分成可访问卷）：
+
+1. 打开 boot 分区（约 16MB，含 `kernel.img` / `boot.scr`）
+2. 进入 `r2s-diag/`
+3. 把整个目录拷走分析
+
+### 推荐升级步骤（bypass）
+
+```sh
+# 1) 升级前检查（必须 OK）
+r2s-check-sysupgrade
+
+# 2) 上传固件后保留配置升级（推荐包装命令，会先写 boot 证据）
+r2s-sysupgrade -v /tmp/firmware.bin
+
+# 3) 等待 1–2 分钟；若原地址不通，试：
+#    http://10.11.11.3/   或  ssh root@10.11.11.3
+```
+
+> LuCI 网页升级不一定走 `r2s-sysupgrade`。网页升级前请先 SSH 执行一次  
+> `r2s-check-sysupgrade && r2s-upgrade-log pre-upgrade /tmp/firmware.bin`  
+> 再在 LuCI 点升级；开机后仍会有 `r2s-diag` 的 post-boot 快照。
+
+手动估体积（应远小于约 5–6MB）：
 
 ```sh
 sysupgrade -l | while read -r f; do
@@ -249,6 +309,14 @@ done | awk '{s+=$1} END{printf "%.2f MB\n", s/1024/1024}'
 ```
 
 若曾手动在 `/etc/sysupgrade.conf` 写入 `/etc/soho/` 或 `/etc/lucky.daji/`，请删除这两行后再升级。
+
+**更稳妥的两次法（推荐生产环境）：**
+
+1. 先用 LuCI/CLI **导出备份**（确认约 1–2MB）
+2. **不保留配置**刷入新固件
+3. 能上 `10.11.11.3` 后，再 **恢复备份**
+
+这样即使 keep-config 路径异常，也不会“整机不可达”。
 
 ## 注意事项
 

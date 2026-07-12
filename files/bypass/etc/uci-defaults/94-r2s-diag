@@ -1,0 +1,6 @@
+#!/bin/sh
+# Enable boot diagnostics service on bypass images.
+
+[ -x /etc/init.d/r2s-diag ] && /etc/init.d/r2s-diag enable 2>/dev/null || true
+[ -x /etc/init.d/r2s-mgmt-rescue ] && /etc/init.d/r2s-mgmt-rescue enable 2>/dev/null || true
+exit 0
