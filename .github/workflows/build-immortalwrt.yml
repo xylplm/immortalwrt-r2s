@@ -650,7 +650,7 @@ jobs:
               "$local_apk_dir"/soho-[0-9]*.apk
             )
             local sealhelper_apks=(
-              "$local_apk_dir"/soho-sealhelper-2.0.15-r1.apk
+              "$local_apk_dir"/soho-sealhelper-[0-9]*.apk
               "$local_apk_dir"/soho-sealhelper_*_"${arch_packages}".apk
               "$local_apk_dir"/soho-sealhelper-*_"${arch_packages}".apk
             )
