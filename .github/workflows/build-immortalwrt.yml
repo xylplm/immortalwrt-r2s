@@ -398,15 +398,26 @@ jobs:
             geo_work="$(mktemp -d)"
             # Keep previous mihomo_work cleanup and also remove geo_work on exit.
             trap 'rm -rf "$mihomo_work" "$geo_work"' EXIT
-            geo_files=("geoip.dat:geoip.dat" "geosite.dat:GeoSite.dat" "country.mmdb:country.mmdb" "GeoLite2-ASN.mmdb:ASN.mmdb")
+            # src:filename on MetaCubeX release -> one or more names under /etc/soho/geo/
+            # Soho UI / sealhelper check ASN as GeoLite2-ASN.mmdb (not only ASN.mmdb).
+            # Provide both names so status "ASN 缺失" does not false-alarm.
+            geo_files=(
+              "geoip.dat:geoip.dat"
+              "geosite.dat:GeoSite.dat,geosite.dat"
+              "country.mmdb:country.mmdb"
+              "GeoLite2-ASN.mmdb:GeoLite2-ASN.mmdb,ASN.mmdb,asn.mmdb"
+            )
             for item in "${geo_files[@]}"; do
               src="${item%%:*}"
-              dst="${item##*:}"
+              dsts="${item##*:}"
               url="${GEODATA_BASE_URL}/${src}"
               if curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 600 \
-                "$url" -o "$geo_work/$dst"; then
-                cp -v "$geo_work/$dst" "$geo_dir/$dst"
-                chmod 0600 "$geo_dir/$dst"
+                "$url" -o "$geo_work/$src"; then
+                IFS=',' read -r -a dst_arr <<< "$dsts"
+                for dst in "${dst_arr[@]}"; do
+                  cp -v "$geo_work/$src" "$geo_dir/$dst"
+                  chmod 0600 "$geo_dir/$dst"
+                done
               else
                 echo "Failed to download geodata: $src" >&2
                 exit 1
@@ -899,8 +910,8 @@ jobs:
               else
                 echo "Verified embedded mihomo via SHA256 (${mihomo_sha256})"
               fi
-              # 验证预置 geodata 文件存在
-              for geo_file in GeoSite.dat geoip.dat country.mmdb ASN.mmdb; do
+              # 验证预置 geodata（含 Soho UI 检测的 GeoLite2-ASN.mmdb 文件名）
+              for geo_file in GeoSite.dat geosite.dat geoip.dat country.mmdb ASN.mmdb GeoLite2-ASN.mmdb; do
                 sudo test -s "$mount_dir/etc/soho/geo/$geo_file" || {
                   echo "Embedded geodata file is missing or empty: /etc/soho/geo/$geo_file" >&2
                   exit 1
