@@ -1,15 +1,16 @@
 #!/bin/sh
 
+# Migrate legacy whole-directory keep rules that break sysupgrade on R2S:
+# boot partition is only 16MB; /etc/soho/ (geo+logs) must not be archived.
+
 SYSUPGRADE_FILE="/etc/sysupgrade.conf"
 
-ensure_line() {
-    local line="$1"
-    local file="$2"
+touch "$SYSUPGRADE_FILE"
 
-    touch "$file"
-    grep -qxF "$line" "$file" 2>/dev/null || echo "$line" >> "$file"
-}
-
-ensure_line "/etc/soho/" "$SYSUPGRADE_FILE"
+# Drop oversized / legacy directory keep rules (hooks keep essential files).
+sed -i \
+	-e '\|^/etc/soho/|d' \
+	-e '\|^/etc/soho$|d' \
+	"$SYSUPGRADE_FILE" 2>/dev/null || true
 
 exit 0

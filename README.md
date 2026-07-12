@@ -221,6 +221,35 @@ Lucky 只会内置到 `bypass` 固件。
 - 更新 Mihomo 内核策略：workflow 每次自动下载最新稳定版，无需手动替换仓库文件。
 - 更新 Soho 本地包：替换 [packages/local-apk](packages/local-apk) 中对应 APK，并确保同一包只保留一个版本。
 
+## 保留配置升级（sysupgrade）
+
+R2S 的 boot 分区只有约 **16MB**。升级并勾选「保留配置」时，OpenWrt 会把备份放到该分区，因此备份体积必须远小于 16MB。
+
+本仓库对 `bypass` 的策略是：
+
+| 组件 | 会保留 | 不会保留（体积过大或可由固件重建） |
+| --- | --- | --- |
+| Soho | `/etc/config/soho`、账号/会话等小状态文件（`account.enc`、`session.enc` 等） | `/etc/soho/geo/`、日志（`kernel.log`/`app.log` 等） |
+| Lucky | 与 Lucky 官方导出一致：`lucky_*.lkcf`、`lucky.conf`（若存在）、`porttrapdb/`、`statushistorydb/` | `lucky` 二进制、`scripts/`、`ipdb/` 等 |
+| 网络/系统 | 常规 OpenWrt 配置（network、firewall、dropbear 等） | — |
+
+实现位置：
+
+- [files/bypass/lib/upgrade/soho-conffiles.sh](files/bypass/lib/upgrade/soho-conffiles.sh)
+- [files/lucky/lib/upgrade/lucky-conffiles.sh](files/lucky/lib/upgrade/lucky-conffiles.sh)
+- 首启会清理错误的整目录保留规则：`96-bypass-sysupgrade`、`98-lucky-daji`
+
+升级前可在设备上自检备份体积（应远小于约 8MB 才稳妥）：
+
+```sh
+sysupgrade -l | while read -r f; do
+  [ -e "$f" ] || continue
+  wc -c < "$f"
+done | awk '{s+=$1} END{printf "%.2f MB\n", s/1024/1024}'
+```
+
+若曾手动在 `/etc/sysupgrade.conf` 写入 `/etc/soho/` 或 `/etc/lucky.daji/`，请删除这两行后再升级。
+
 ## 注意事项
 
 - 请确认设备是 NanoPi R2S，不要刷入到 NanoPi R2S Plus 或其他相近设备。
@@ -228,6 +257,7 @@ Lucky 只会内置到 `bypass` 固件。
 - `bypass` 固件默认管理地址为 `10.11.11.3`，刷写前请确认不会和现有网络冲突。
 - 首次启动时会为仍为空的 root 密码设置默认值 `password`；首次登录后请立即修改。
 - 刷写、升级或扩容前请自行备份配置和重要数据。
+- 保留配置升级时不要把整个 `/etc/soho/` 或 `/etc/lucky.daji/` 写入 `sysupgrade.conf`，否则备份会撑爆 boot 分区导致升级失败。
 
 ## 上游与许可证
 

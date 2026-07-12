@@ -5,11 +5,11 @@ PROFILE_FILE="/etc/profile"
 SYSUPGRADE_FILE="/etc/sysupgrade.conf"
 
 ensure_line() {
-    local line="$1"
-    local file="$2"
+	local line="$1"
+	local file="$2"
 
-    touch "$file"
-    grep -qxF "$line" "$file" 2>/dev/null || echo "$line" >> "$file"
+	touch "$file"
+	grep -qxF "$line" "$file" 2>/dev/null || echo "$line" >> "$file"
 }
 
 sed -i '/^alias lucky=/d' "$PROFILE_FILE" 2>/dev/null || true
@@ -17,7 +17,13 @@ sed -i '/^export luckydir=/d' "$PROFILE_FILE" 2>/dev/null || true
 ensure_line "alias lucky=\"$LUCKY_DIR/lucky\"" "$PROFILE_FILE"
 ensure_line "export luckydir=\"$LUCKY_DIR\"" "$PROFILE_FILE"
 
-ensure_line "$LUCKY_DIR/" "$SYSUPGRADE_FILE"
+# Never keep the whole Lucky install dir (contains multi-MB binary + DBs).
+# Essential *.lkcf / lucky.conf are preserved via /lib/upgrade/lucky-conffiles.sh.
+touch "$SYSUPGRADE_FILE"
+sed -i \
+	-e '\|^/etc/lucky\.daji/|d' \
+	-e '\|^/etc/lucky\.daji$|d' \
+	"$SYSUPGRADE_FILE" 2>/dev/null || true
 
 chmod 0755 "$LUCKY_DIR/lucky" 2>/dev/null || true
 chmod 0755 /etc/init.d/lucky.daji 2>/dev/null || true
