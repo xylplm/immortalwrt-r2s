@@ -594,7 +594,7 @@ jobs:
             base_no_ext=${base%.apk}
 
             case "$base_no_ext" in
-              soho-sealhelper-*_*_*)
+              soho-sealhelper-*)
                 versioned=${base_no_ext#soho-sealhelper-}
                 versioned=${versioned%%_*}
                 printf 'soho-sealhelper-%s.apk' "$versioned"
@@ -650,6 +650,7 @@ jobs:
               "$local_apk_dir"/soho-[0-9]*.apk
             )
             local sealhelper_apks=(
+              "$local_apk_dir"/soho-sealhelper-2.0.15-r1.apk
               "$local_apk_dir"/soho-sealhelper_*_"${arch_packages}".apk
               "$local_apk_dir"/soho-sealhelper-*_"${arch_packages}".apk
             )
