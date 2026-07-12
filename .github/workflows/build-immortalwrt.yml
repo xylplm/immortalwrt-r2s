@@ -308,6 +308,11 @@ jobs:
               ln -sf '../init.d/r2s-diag' "$overlay/etc/rc.d/S11r2s-diag"
               chmod 0755 "$overlay/etc/init.d/r2s-diag"
             fi
+            # soho-web (8055) needs LuCI soho.js under /usr/share/soho-web/tools/
+            if [ -f "$overlay/etc/init.d/soho-web-assets" ]; then
+              ln -sf '../init.d/soho-web-assets' "$overlay/etc/rc.d/S97soho-web-assets"
+              chmod 0755 "$overlay/etc/init.d/soho-web-assets"
+            fi
             for sbin in r2s-check-sysupgrade r2s-sysupgrade r2s-upgrade-log; do
               if [ -f "$overlay/usr/sbin/$sbin" ]; then
                 chmod 0755 "$overlay/usr/sbin/$sbin"

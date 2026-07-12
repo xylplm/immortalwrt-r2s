@@ -1,0 +1,41 @@
+#!/bin/sh /etc/rc.common
+# soho-sealhelper serve (port 8055) loads SPA from /usr/share/soho-web and
+# index.html fetches /tools/soho.js + /tools/soho-pages.js.
+# luci-app-soho installs those files under /www/luci-static/resources/tools/
+# but does not copy them into WEB_DIR — without this bridge, 8055 shows
+# "加载失败：load /tools/soho.js".
+
+START=97
+STOP=20
+
+SRC_TOOLS='/www/luci-static/resources/tools'
+SRC_THEME='/www/luci-static/resources/soho'
+DST='/usr/share/soho-web'
+
+boot() {
+	start
+}
+
+start() {
+	[ -f "$SRC_TOOLS/soho.js" ] || return 0
+	mkdir -p "$DST/tools" "$DST/soho" 2>/dev/null || true
+
+	# Only copy when missing or size differs (avoid needless writes).
+	for f in soho.js soho-pages.js; do
+		[ -f "$SRC_TOOLS/$f" ] || continue
+		if [ ! -f "$DST/tools/$f" ] || ! cmp -s "$SRC_TOOLS/$f" "$DST/tools/$f" 2>/dev/null; then
+			cp -a "$SRC_TOOLS/$f" "$DST/tools/$f" 2>/dev/null || true
+		fi
+	done
+	if [ -f "$SRC_THEME/soho-theme.css" ]; then
+		if [ ! -f "$DST/soho/soho-theme.css" ] \
+			|| ! cmp -s "$SRC_THEME/soho-theme.css" "$DST/soho/soho-theme.css" 2>/dev/null; then
+			cp -a "$SRC_THEME/soho-theme.css" "$DST/soho/soho-theme.css" 2>/dev/null || true
+		fi
+	fi
+	return 0
+}
+
+stop() {
+	return 0
+}
