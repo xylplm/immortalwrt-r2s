@@ -9,14 +9,20 @@
 # 256 MiB virtual swap is enough for short spikes without encouraging thrash.
 uci set system.@system[0].zram_size_mb='256'
 
-# Current ImmortalWrt prebuilt kmod-zram only ships LZO backends.
-# Prefer distro default lzo-rle; fall back to lzo if needed.
-algo='lzo-rle'
+# ImmortalWrt prebuilt kmod-zram typically only ships LZO backends.
+# LuCI (luci-app-zram-swap / system page) only offers: lzo | lz4 | zstd.
+# Use "lzo" so the UI shows a selected value; "lzo-rle" works at runtime
+# but is missing from the dropdown and appears as "-- 请选择 --".
+algo='lzo'
 if [ -r /sys/block/zram0/comp_algorithm ]; then
-	if grep -q 'lzo-rle' /sys/block/zram0/comp_algorithm; then
-		algo='lzo-rle'
-	elif grep -q 'lzo' /sys/block/zram0/comp_algorithm; then
+	# Prefer plain lzo when listed (matches LuCI). Fall back only if kernel
+	# exposes neither lzo nor lzo-rle (unlikely).
+	if grep -qw 'lzo' /sys/block/zram0/comp_algorithm 2>/dev/null \
+		|| grep -q '\[lzo\]' /sys/block/zram0/comp_algorithm 2>/dev/null \
+		|| grep -q 'lzo' /sys/block/zram0/comp_algorithm 2>/dev/null; then
 		algo='lzo'
+	elif grep -q 'lzo-rle' /sys/block/zram0/comp_algorithm 2>/dev/null; then
+		algo='lzo-rle'
 	fi
 fi
 uci set system.@system[0].zram_comp_algo="$algo"

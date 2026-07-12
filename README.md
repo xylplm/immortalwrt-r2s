@@ -77,7 +77,7 @@ zram 说明（`plus` / `bypass`）：
 - 默认启用 **256 MiB** 压缩内存交换，仅在内存紧张发生换页时压缩，低负载几乎不占 CPU。
 - 首启脚本：[files/plus/etc/uci-defaults/95-zram-swap](files/plus/etc/uci-defaults/95-zram-swap)。
 - 这是防 OOM 的兜底，不是用来长期硬撑超大代理配置的。
-- 压缩算法使用官方预编译 `kmod-zram` 支持的 LZO 系：优先 **`lzo-rle`**，否则回退 **`lzo`**。
+- 压缩算法默认 **`lzo`**（与 LuCI 下拉选项一致；官方预编译 `kmod-zram` 通常只有 LZO，没有可用的 `lz4`/`zstd`）。若写成 `lzo-rle`，运行时可能仍有效，但 LuCI 会显示「-- 请选择 --」。
 
 ### 仅 bypass 内置
 
