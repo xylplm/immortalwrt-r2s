@@ -117,30 +117,26 @@ write_snapshot_file() {
 		uci -q get system.@system[0].r2s_bypass_defaults 2>/dev/null
 		echo "-- sysupgrade.conf --"
 		cat /etc/sysupgrade.conf 2>/dev/null
-		echo "-- keep list soho/lucky --"
-		sysupgrade -l 2>/dev/null | grep -E 'soho|lucky' || true
+		echo "-- keep list lucky --"
+		sysupgrade -l 2>/dev/null | grep -E 'lucky' || true
 		echo "-- keep raw size KB --"
 		sysupgrade -l 2>/dev/null | while read -r f; do
 			[ -e "$f" ] || continue
 			wc -c <"$f" 2>/dev/null
 		done | awk '{s+=$1} END{printf "%d\n", (s+1023)/1024}'
 		echo "-- fat keep paths --"
-		sysupgrade -l 2>/dev/null | grep -E '/etc/soho/geo/|kernel\.log|app\.log|/etc/lucky\.daji/lucky$|/etc/lucky\.daji/scripts/' || echo '(none)'
+		sysupgrade -l 2>/dev/null | grep -E '/etc/lucky\.daji/lucky$|/etc/lucky\.daji/scripts/' || echo '(none)'
 		echo "-- boot partition --"
 		ls -la /mnt/mmcblk0p1 2>/dev/null || true
 		df -k /mnt/mmcblk0p1 2>/dev/null || true
 		echo "-- /tmp upgrade remnants --"
 		ls -la /tmp/sysupgrade* /tmp/firmware.bin /tmp/*.img* 2>/dev/null || true
-		echo "-- soho packages --"
-		apk info -v 2>/dev/null | grep -i soho || true
-		echo "-- soho state files --"
-		ls -la /etc/config/soho /etc/soho 2>/dev/null | head -40
 		echo "-- dmesg tail --"
 		dmesg 2>/dev/null | tail -n 80
 		echo "-- logread tail --"
 		logread 2>/dev/null | tail -n 80
 		echo "-- processes (net/upgrade) --"
-		ps w 2>/dev/null | grep -iE 'sysupgrade|netifd|procd|dropbear|uhttpd|soho|lucky' | grep -v grep || true
+		ps w 2>/dev/null | grep -iE 'sysupgrade|netifd|procd|dropbear|uhttpd|lucky' | grep -v grep || true
 		echo "-- cmdline --"
 		cat /proc/cmdline 2>/dev/null
 		echo "-- partitions --"

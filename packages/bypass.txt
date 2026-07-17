@@ -1,3 +1,2 @@
 # Variant 3: bypass-router packages appended on top of plus.
 # Add packages that are only needed by the bypass-router image.
-# Soho packages intentionally removed from this repository.

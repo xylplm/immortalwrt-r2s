@@ -9,8 +9,8 @@ LOG='/usr/sbin/r2s-upgrade-log'
 echo "=== R2S keep-config preflight ==="
 [ -x "$LOG" ] && "$LOG" event preflight-start "r2s-check-sysupgrade" 2>/dev/null || true
 
-echo "-- keep list (lucky / legacy soho) --"
-sysupgrade -l 2>/dev/null | grep -E 'soho|lucky' || echo "(none)"
+echo "-- keep list (lucky) --"
+sysupgrade -l 2>/dev/null | grep -E 'lucky' || echo "(none)"
 
 echo "-- estimated raw backup size --"
 raw_kb="$(
@@ -22,7 +22,7 @@ raw_kb="$(
 echo "raw_kb=${raw_kb} (limit ${MAX_RAW_KB})"
 
 echo "-- fat path scan (should be empty) --"
-bad="$(sysupgrade -l 2>/dev/null | grep -E '/etc/soho/geo/|kernel\.log|app\.log|/etc/lucky\.daji/lucky$|/etc/lucky\.daji/scripts/' || true)"
+bad="$(sysupgrade -l 2>/dev/null | grep -E '/etc/lucky\.daji/lucky$|/etc/lucky\.daji/scripts/' || true)"
 if [ -n "$bad" ]; then
 	echo "$bad"
 	echo "ERROR: oversized keep paths present"
@@ -49,14 +49,14 @@ echo "boot_free_kb=${boot_free:-unknown} (need roughly < ${MAX_BOOT_NEED_KB} for
 
 if [ -n "$raw_kb" ] && [ "$raw_kb" -gt "$MAX_RAW_KB" ] 2>/dev/null; then
 	echo "ERROR: raw keep list too large (${raw_kb}KB > ${MAX_RAW_KB}KB)"
-	echo "Fix: remove /etc/soho/ and /etc/lucky.daji/ from /etc/sysupgrade.conf; rely on lucky keep hooks."
+	echo "Fix: remove /etc/lucky.daji/ from /etc/sysupgrade.conf; rely on lucky keep hooks."
 	[ -x "$LOG" ] && "$LOG" event preflight-fail "raw_kb=${raw_kb}" 2>/dev/null || true
 	[ -x "$LOG" ] && "$LOG" snapshot preflight-fail 2>/dev/null || true
 	exit 1
 fi
 
 if [ -n "$boot_free" ] && [ "$raw_kb" -gt 0 ] 2>/dev/null; then
-	# gzip usually shrinks, but account.enc is already compressed-ish; require headroom
+	# gzip usually shrinks; still require headroom for boot partition
 	if [ "$raw_kb" -gt $((boot_free - 2048)) ] 2>/dev/null; then
 		echo "ERROR: backup may not fit boot free space (raw ${raw_kb}KB, free ${boot_free}KB)"
 		[ -x "$LOG" ] && "$LOG" event preflight-fail "boot free ${boot_free} raw ${raw_kb}" 2>/dev/null || true

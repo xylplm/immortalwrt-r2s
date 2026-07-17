@@ -30,9 +30,8 @@
 - 每次构建输出 `base`、`plus`、`bypass` 三种变体。
 - `plus` 只加入通用常用插件。
 - `bypass` 额外加入旁路由默认配置和 Lucky。
-- **不包含 Soho / mihomo / geodata**（仓库已移除相关本地包与构建逻辑）。
 - GitHub Actions 支持手动构建、定时构建、Artifacts 和 Releases 发布。
-- 构建后校验固件内容，防止旁路由配置、Lucky 泄漏到非 bypass 固件，并确认 Soho 残留不会进入镜像。
+- 构建后校验固件内容，防止旁路由配置、Lucky 泄漏到非 bypass 固件。
 
 ## 支持设备
 
@@ -85,8 +84,6 @@ zram 说明（`plus` / `bypass`）：
 - 旁路由网络默认配置：`files/bypass`
 - Lucky 本地包：`packages/lucky`
 - 可选额外包列表：`packages/bypass.txt`（当前默认不追加软件包）
-
-本仓库 **不包含 Soho / mihomo / geodata**。
 
 ## 旁路由配置（仅 bypass）
 
@@ -211,7 +208,7 @@ R2S 的 boot 分区只有约 **16MB**。升级并勾选「保留配置」时，O
 
 历史上有两类故障：
 
-1. **备份过大**：把 `/etc/lucky.daji/`（含 12MB 二进制）整目录保留，或旧固件留下的 `/etc/soho/` 整目录保留，备份 40MB+，写不进 16MB boot，升级中断或恢复残缺。
+1. **备份过大**：把 `/etc/lucky.daji/`（含 12MB 二进制）整目录保留，备份 40MB+，写不进 16MB boot，升级中断或恢复残缺。
 2. **配置恢复不完整**：固件已写入，但 overlay/网络 UCI 未完整恢复，设备“像挂了”（其实可能已启动，只是管理地址不是 `10.11.11.3`）。`99-bypass-router` 在标记 `r2s_bypass_defaults=1` 后不会再次改网络，所以需要启动自救。
 
 ### 本仓库策略
@@ -224,7 +221,7 @@ R2S 的 boot 分区只有约 **16MB**。升级并勾选「保留配置」时，O
 加固实现：
 
 - [files/lucky/lib/upgrade/lucky-conffiles.sh](files/lucky/lib/upgrade/lucky-conffiles.sh)
-- 首启清理错误整目录规则：`96-bypass-sysupgrade`、`98-lucky-daji`
+- 首启清理错误整目录规则：`98-lucky-daji`
 - 升级前自检：`/usr/sbin/r2s-check-sysupgrade`
 - 推荐 CLI 升级包装：`/usr/sbin/r2s-sysupgrade`（升级前强制落盘证据）
 - 诊断落盘：`/usr/sbin/r2s-upgrade-log`
@@ -288,7 +285,7 @@ sysupgrade -l | while read -r f; do
 done | awk '{s+=$1} END{printf "%.2f MB\n", s/1024/1024}'
 ```
 
-若曾手动在 `/etc/sysupgrade.conf` 写入 `/etc/soho/` 或 `/etc/lucky.daji/`，请删除这两行后再升级。
+若曾手动在 `/etc/sysupgrade.conf` 写入 `/etc/lucky.daji/`，请删除后再升级。
 
 **更稳妥的两次法（推荐生产环境）：**
 
@@ -305,8 +302,7 @@ done | awk '{s+=$1} END{printf "%.2f MB\n", s/1024/1024}'
 - `bypass` 固件默认管理地址为 `10.11.11.3`，刷写前请确认不会和现有网络冲突。
 - 首次启动时会为仍为空的 root 密码设置默认值 `password`；首次登录后请立即修改。
 - 刷写、升级或扩容前请自行备份配置和重要数据。
-- 保留配置升级时不要把整个 `/etc/soho/` 或 `/etc/lucky.daji/` 写入 `sysupgrade.conf`，否则备份会撑爆 boot 分区导致升级失败。
-- 从旧的含 Soho 固件升级时，建议先确认 `sysupgrade.conf` 未整目录保留 `/etc/soho/`；新固件本身不再包含 Soho。
+- 保留配置升级时不要把整个 `/etc/lucky.daji/` 写入 `sysupgrade.conf`，否则备份会撑爆 boot 分区导致升级失败。
 
 ## 上游与许可证
 
