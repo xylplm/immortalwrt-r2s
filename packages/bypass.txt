@@ -1,6 +1,3 @@
 # Variant 3: bypass-router packages appended on top of plus.
 # Add packages that are only needed by the bypass-router image.
-soho-sealhelper
-soho
-luci-app-soho
-kmod-inet-diag
+# Soho packages intentionally removed from this repository.

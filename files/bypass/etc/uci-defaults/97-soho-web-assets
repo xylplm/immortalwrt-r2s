@@ -1,8 +1,0 @@
-#!/bin/sh
-# Ensure 8055 SPA can load /tools/soho.js (see soho-web-assets init).
-
-[ -x /etc/init.d/soho-web-assets ] && {
-	/etc/init.d/soho-web-assets enable 2>/dev/null || true
-	/etc/init.d/soho-web-assets start 2>/dev/null || true
-}
-exit 0

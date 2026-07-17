@@ -1,7 +1,7 @@
 # R2S keep-config safety + diagnostics (sourced via include /lib/upgrade).
 #
 # OpenWrt stages the config tarball onto the 16MB boot partition. This tree
-# already slims Soho/Lucky keep lists; additionally:
+# already slims Lucky keep lists (and strips legacy /etc/soho whole-dir rules); additionally:
 #   - /usr/sbin/r2s-check-sysupgrade  : run before upgrading
 #   - /usr/sbin/r2s-sysupgrade        : CLI wrapper that logs then flashes
 #   - /usr/sbin/r2s-upgrade-log       : persists evidence to boot + overlay

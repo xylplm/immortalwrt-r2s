@@ -52,8 +52,6 @@ concurrency:
 
 env:
   DOWNLOAD_BASE: https://downloads.immortalwrt.org/releases
-  MIHOMO_API_URL: https://api.github.com/repos/MetaCubeX/mihomo/releases/latest
-  GEODATA_BASE_URL: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest
   LUCKY_LOCAL_PACKAGE: packages/lucky/lucky_3.0.0_Linux_arm64_xiaojv_waf.tar.gz
   LUCKY_INSTALL_DIR: /etc/lucky.daji
   LUCKY_SERVICE_NAME: lucky.daji
@@ -275,8 +273,6 @@ jobs:
         shell: bash
         env:
           VARIANT: ${{ matrix.variant }}
-          MIHOMO_API_URL: ${{ env.MIHOMO_API_URL }}
-          GEODATA_BASE_URL: ${{ env.GEODATA_BASE_URL }}
           LUCKY_LOCAL_PACKAGE: ${{ env.LUCKY_LOCAL_PACKAGE }}
           LUCKY_INSTALL_DIR: ${{ env.LUCKY_INSTALL_DIR }}
           LUCKY_SERVICE_NAME: ${{ env.LUCKY_SERVICE_NAME }}
@@ -308,131 +304,16 @@ jobs:
               ln -sf '../init.d/r2s-diag' "$overlay/etc/rc.d/S11r2s-diag"
               chmod 0755 "$overlay/etc/init.d/r2s-diag"
             fi
-            # soho-web (8055) needs LuCI soho.js under /usr/share/soho-web/tools/
-            if [ -f "$overlay/etc/init.d/soho-web-assets" ]; then
-              ln -sf '../init.d/soho-web-assets' "$overlay/etc/rc.d/S97soho-web-assets"
-              chmod 0755 "$overlay/etc/init.d/soho-web-assets"
-            fi
             for sbin in r2s-check-sysupgrade r2s-sysupgrade r2s-upgrade-log; do
               if [ -f "$overlay/usr/sbin/$sbin" ]; then
                 chmod 0755 "$overlay/usr/sbin/$sbin"
               fi
             done
-            mihomo_tmp="${overlay}/usr/bin/mihomo"
-            mkdir -p "$(dirname "$mihomo_tmp")"
-            mihomo_work="$(mktemp -d)"
-            trap 'rm -rf "$mihomo_work"' EXIT
-            mihomo_json="$mihomo_work/release.json"
-            mihomo_archive="$mihomo_work/mihomo-arm64.gz"
-            mihomo_download="$mihomo_work/mihomo"
 
-            if curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 120 \
-              -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
-              "$MIHOMO_API_URL" -o "$mihomo_json"; then
-              mihomo_tag=$(jq -r '.tag_name // empty' "$mihomo_json")
-              # Official asset name is mihomo-linux-arm64-<tag>.gz, e.g. mihomo-linux-arm64-v1.19.28.gz
-              # (older releases sometimes used mihomo-linux-arm64-v1-<tag>.gz for GOARCH level)
-              mihomo_asset=$(jq -r --arg tag "$mihomo_tag" '
-                .assets[]
-                | select(
-                    .name == ("mihomo-linux-arm64-" + $tag + ".gz")
-                    or .name == ("mihomo-linux-arm64-v1-" + $tag + ".gz")
-                  )
-                | .browser_download_url
-              ' "$mihomo_json" | head -n 1)
-              mihomo_digest=$(jq -r --arg tag "$mihomo_tag" '
-                .assets[]
-                | select(
-                    .name == ("mihomo-linux-arm64-" + $tag + ".gz")
-                    or .name == ("mihomo-linux-arm64-v1-" + $tag + ".gz")
-                  )
-                | .digest
-              ' "$mihomo_json" | head -n 1)
-              case "$mihomo_tag" in
-                v[0-9]*.[0-9]*.[0-9]*) ;;
-                *) mihomo_asset=''; mihomo_digest='' ;;
-              esac
-            else
-              mihomo_tag=''
-              mihomo_asset=''
-              mihomo_digest=''
-            fi
-
-            if [ -n "$mihomo_asset" ] && [ -n "$mihomo_digest" ] && [[ "$mihomo_digest" == sha256:* ]]; then
-              echo "Downloading latest stable mihomo ${mihomo_tag}: ${mihomo_asset}"
-              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 900 \
-                "$mihomo_asset" -o "$mihomo_archive"
-              echo "${mihomo_digest#sha256:*}  $mihomo_archive" | sha256sum -c -
-              gzip -dc "$mihomo_archive" > "$mihomo_download"
-              chmod 0700 "$mihomo_download"
-            else
-              echo "Unable to download the latest stable mihomo ARM64 binary." >&2
-              echo "tag=${mihomo_tag:-<empty>} asset=${mihomo_asset:-<empty>} digest=${mihomo_digest:-<empty>}" >&2
-              if [ -f "$mihomo_json" ]; then
-                echo 'Available arm64 assets:' >&2
-                jq -r '.assets[] | select(.name | test("linux-arm64")) | .name' "$mihomo_json" >&2 || true
-              fi
-              exit 1
-            fi
-
-            mihomo_sha256=$(sha256sum "$mihomo_download" | awk '{print $1}')
-            # Builder hosts are x86_64; the embedded binary is aarch64 and cannot be
-            # executed here (exit 126). Validate ELF architecture instead of running -v.
-            mihomo_file_info=$(file -b "$mihomo_download" 2>/dev/null || true)
-            printf '%s\n' "$mihomo_file_info" | grep -Eqi 'ARM aarch64|ARM64|AArch64' || {
-              echo "Downloaded mihomo is not an aarch64 binary: ${mihomo_file_info:-unknown}" >&2
-              exit 1
-            }
-            # Release tag is the version source of truth after digest verification.
-            mihomo_version="Mihomo Meta ${mihomo_tag} (aarch64, not executed on builder)"
-            cp -v "$mihomo_download" "$mihomo_tmp"
-            chmod 0700 "$mihomo_tmp"
-            echo "Embedded mihomo: ${mihomo_tag} (${mihomo_sha256})"
-            echo "file: ${mihomo_file_info}"
-            echo "mihomo_version=${mihomo_tag}" >> "$GITHUB_OUTPUT"
-            echo "mihomo_sha256=${mihomo_sha256}" >> "$GITHUB_OUTPUT"
-
-            # —— 预置 geodata：mihomo 启动时在 /etc/soho/geo/ 查找，避免首次启动在线下载失败 ——
-            geo_dir="${overlay}/etc/soho/geo"
-            mkdir -p "$geo_dir"
-            geo_work="$(mktemp -d)"
-            # Keep previous mihomo_work cleanup and also remove geo_work on exit.
-            trap 'rm -rf "$mihomo_work" "$geo_work"' EXIT
-            # src:filename on MetaCubeX release -> one or more names under /etc/soho/geo/
-            # Soho UI / sealhelper check ASN as GeoLite2-ASN.mmdb (not only ASN.mmdb).
-            # Provide both names so status "ASN 缺失" does not false-alarm.
-            geo_files=(
-              "geoip.dat:geoip.dat"
-              "geosite.dat:GeoSite.dat,geosite.dat"
-              "country.mmdb:country.mmdb"
-              "GeoLite2-ASN.mmdb:GeoLite2-ASN.mmdb,ASN.mmdb,asn.mmdb"
-            )
-            for item in "${geo_files[@]}"; do
-              src="${item%%:*}"
-              dsts="${item##*:}"
-              url="${GEODATA_BASE_URL}/${src}"
-              if curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 600 \
-                "$url" -o "$geo_work/$src"; then
-                IFS=',' read -r -a dst_arr <<< "$dsts"
-                for dst in "${dst_arr[@]}"; do
-                  cp -v "$geo_work/$src" "$geo_dir/$dst"
-                  chmod 0600 "$geo_dir/$dst"
-                done
-              else
-                echo "Failed to download geodata: $src" >&2
-                exit 1
-              fi
-            done
-            chmod 0700 "$geo_dir"
-            echo "Embedded geodata: $(ls -1 "$geo_dir")"
-          fi
-
-          if [ "$VARIANT" = 'bypass' ]; then
             cp -a files/lucky/. "$overlay"/
 
             lucky_tmp="$(mktemp -d)"
-            # Preserve cleanup for mihomo/geo workdirs created earlier in the bypass branch.
-            trap 'rm -rf "${mihomo_work:-}" "${geo_work:-}" "$lucky_tmp"' EXIT
+            trap 'rm -rf "$lucky_tmp"' EXIT
             [ -f "$LUCKY_LOCAL_PACKAGE" ] || { echo "Local Lucky package is missing: ${LUCKY_LOCAL_PACKAGE}" >&2; exit 1; }
             cp -v "$LUCKY_LOCAL_PACKAGE" "$lucky_tmp/lucky.tar.gz"
             sha256sum "$lucky_tmp/lucky.tar.gz"
@@ -508,13 +389,6 @@ jobs:
             esac
           }
 
-          variant_needs_soho() {
-            case " $1 " in
-              *' soho-sealhelper '*|*' soho '*|*' luci-app-soho '*) return 0 ;;
-              *) return 1 ;;
-            esac
-          }
-
           enable_apk_force_overwrite() {
             if grep -qF '$(APK) add --force-overwrite --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)' Makefile; then
               return 0
@@ -528,187 +402,10 @@ jobs:
             echo 'Enabled apk --force-overwrite for this variant.'
           }
 
-          enforce_soho_apk_install_order() {
-            local install_prefix build_packages_line tmp_makefile
-
-            if grep -qF '$(APK) add --force-overwrite --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)' Makefile; then
-              install_prefix='$(APK) add --force-overwrite --arch $(ARCH_PACKAGES) --no-scripts'
-            elif grep -qF '$(APK) add --arch $(ARCH_PACKAGES) --no-scripts $(BUILD_PACKAGES)' Makefile; then
-              install_prefix='$(APK) add --arch $(ARCH_PACKAGES) --no-scripts'
-            else
-              echo 'Unable to find ImageBuilder APK install command to patch for Soho ordering.' >&2
-              exit 1
-            fi
-            build_packages_line="${install_prefix} \$(BUILD_PACKAGES)"
-
-            tmp_makefile=$(mktemp)
-            awk -v build_packages_line="$build_packages_line" -v install_prefix="$install_prefix" '
-              index($0, build_packages_line) && !patched {
-                print "\t" install_prefix " $(filter-out soho-sealhelper soho luci-app-soho,$(BUILD_PACKAGES))"
-                print "\t" install_prefix " soho-sealhelper"
-                print "\t" install_prefix " soho"
-                print "\t" install_prefix " luci-app-soho"
-                patched = 1
-                next
-              }
-              { print }
-              END { if (!patched) exit 1 }
-            ' Makefile > "$tmp_makefile" || {
-              rm -f "$tmp_makefile"
-              echo 'Unable to patch ImageBuilder Soho APK install order.' >&2
-              exit 1
-            }
-            mv "$tmp_makefile" Makefile
-            echo 'Enforced official Soho APK install order: soho-sealhelper -> soho -> luci-app-soho.'
-          }
-
-          ensure_local_apk_repository() {
-            if ! grep -qE '(^APK:=|\$\(APK\))' Makefile; then
-              echo 'Local APK packages require an APK-based ImageBuilder.' >&2
-              exit 1
-            fi
-            # ImmortalWrt 25.12 already wires in --repository $(PACKAGE_DIR)/packages.adb
-            # natively, so this short-circuits. The patch below is belt-and-suspenders for
-            # any older ImageBuilder that lacks the local repository line.
-            if grep -qF -- '--repository $(PACKAGE_DIR)/packages.adb' Makefile; then
-              return 0
-            fi
-            if ! grep -qF -- '--repositories-file $(TOPDIR)/repositories' Makefile; then
-              echo 'Unable to find ImageBuilder APK repository configuration to patch.' >&2
-              exit 1
-            fi
-
-            local tmp_makefile
-            tmp_makefile=$(mktemp)
-            awk '
-              {
-                print
-                if ($0 ~ /--repositories-file \$\(TOPDIR\)\/repositories/) {
-                  print "\t--repository $(PACKAGE_DIR)/packages.adb \\"
-                  patched = 1
-                }
-              }
-              END { if (!patched) exit 1 }
-            ' Makefile > "$tmp_makefile" || {
-              rm -f "$tmp_makefile"
-              echo 'Unable to patch ImageBuilder local APK repository support.' >&2
-              exit 1
-            }
-            mv "$tmp_makefile" Makefile
-            echo 'Patched ImageBuilder local APK repository support.'
-          }
-
-          resolve_arch_packages() {
-            local arch_packages
-            arch_packages=''
-
-            if [ -f .config ]; then
-              arch_packages=$(sed -n -E 's/^CONFIG_TARGET_ARCH_PACKAGES="?([^"]*)"?$/\1/p' .config | head -n 1 | xargs)
-            fi
-
-            if [ -z "$arch_packages" ]; then
-              arch_packages=$(sed -n -E 's/^[[:space:]]*ARCH_PACKAGES[[:space:]]*:=[[:space:]]*([^$].*)$/\1/p' Makefile | head -n 1 | xargs)
-            fi
-
-            if [ -z "$arch_packages" ]; then
-              arch_packages=$(
-                make -s -f Makefile -pn 2>/dev/null |
-                  sed -n -E 's/^ARCH_PACKAGES[[:space:]]*:=[[:space:]]*([^$].*)$/\1/p' |
-                  head -n 1 |
-                  xargs
-              )
-            fi
-
-            printf '%s' "$arch_packages"
-          }
-
-          canonical_apk_name() {
-            local source_file base base_no_ext package remainder version versioned
-            source_file="$1"
-            base=$(basename "$source_file")
-            base_no_ext=${base%.apk}
-
-            case "$base_no_ext" in
-              soho-sealhelper-*)
-                versioned=${base_no_ext#soho-sealhelper-}
-                versioned=${versioned%%_*}
-                printf 'soho-sealhelper-%s.apk' "$versioned"
-                return 0
-                ;;
-            esac
-
-            if [ "$base_no_ext" != "$base" ] && [ "$base_no_ext" != "${base_no_ext#*_}" ]; then
-              package=${base_no_ext%%_*}
-              remainder=${base_no_ext#*_}
-              version=${remainder%%_*}
-              if [ -n "$package" ] && [ -n "$version" ]; then
-                printf '%s-%s.apk' "$package" "$version"
-                return 0
-              fi
-            fi
-
-            printf '%s' "$base"
-          }
-
-          stage_local_apk_file() {
-            local source_file target_name
-            source_file="$1"
-            target_name=$(canonical_apk_name "$source_file")
-            cp -v "$source_file" "packages/${target_name}"
-          }
-
-          stage_local_apks() {
-            local requested_packages="$1"
-            case " $requested_packages " in
-              *' soho-sealhelper '*|*' soho '*|*' luci-app-soho '*) ;;
-              *) return 0 ;;
-            esac
-
-            local local_apk_dir="../packages/local-apk"
-            [ -d "$local_apk_dir" ] || { echo "Local APK directory not found: $local_apk_dir" >&2; exit 1; }
-
-            local arch_packages
-            arch_packages=$(resolve_arch_packages)
-            [ -n "$arch_packages" ] || { echo 'Unable to resolve ImageBuilder ARCH_PACKAGES.' >&2; exit 1; }
-            echo "Resolved ImageBuilder ARCH_PACKAGES: ${arch_packages}"
-
-            mkdir -p packages
-            shopt -s nullglob
-            local luci_soho_apks=(
-              "$local_apk_dir"/luci-app-soho-[0-9]*.apk
-              "$local_apk_dir"/luci-app-soho_[0-9]*_noarch.apk
-              "$local_apk_dir"/luci-app-soho_[0-9]*_all.apk
-            )
-            local soho_apks=(
-              "$local_apk_dir"/soho_[0-9]*_noarch.apk
-              "$local_apk_dir"/soho_[0-9]*_all.apk
-              "$local_apk_dir"/soho-[0-9]*.apk
-            )
-            local sealhelper_apks=(
-              "$local_apk_dir"/soho-sealhelper-[0-9]*.apk
-              "$local_apk_dir"/soho-sealhelper_*_"${arch_packages}".apk
-              "$local_apk_dir"/soho-sealhelper-*_"${arch_packages}".apk
-            )
-            shopt -u nullglob
-
-            [ "${#luci_soho_apks[@]}" -eq 1 ] || { echo "Expected exactly one luci-app-soho APK, found ${#luci_soho_apks[@]}." >&2; exit 1; }
-            [ "${#soho_apks[@]}" -eq 1 ] || { echo "Expected exactly one noarch soho APK, found ${#soho_apks[@]}." >&2; exit 1; }
-            [ "${#sealhelper_apks[@]}" -eq 1 ] || { echo "Expected exactly one soho-sealhelper APK for ${arch_packages}, found ${#sealhelper_apks[@]}." >&2; exit 1; }
-
-            stage_local_apk_file "${sealhelper_apks[0]}"
-            stage_local_apk_file "${soho_apks[0]}"
-            stage_local_apk_file "${luci_soho_apks[0]}"
-            ensure_local_apk_repository
-          }
-
           packages=$(variant_packages "$VARIANT")
           cd imagebuilder
-          stage_local_apks "$packages"
           if variant_needs_apk_force_overwrite "$packages"; then
             enable_apk_force_overwrite
-          fi
-          if variant_needs_soho "$packages"; then
-            enforce_soho_apk_install_order
           fi
 
           make image PROFILE="$PROFILE" PACKAGES="$packages" ROOTFS_PARTSIZE="$ROOTFS_PARTSIZE" FILES="$OPENWRT_FILES"
@@ -728,8 +425,6 @@ jobs:
         env:
           VARIANT: ${{ matrix.variant }}
           PROFILE: ${{ needs.prepare.outputs.profile }}
-          MIHOMO_VERSION_FILE: ${{ steps.custom_files.outputs.mihomo_version }}
-          MIHOMO_SHA256_FILE: ${{ steps.custom_files.outputs.mihomo_sha256 }}
           LUCKY_INSTALL_DIR: ${{ env.LUCKY_INSTALL_DIR }}
           LUCKY_SERVICE_NAME: ${{ env.LUCKY_SERVICE_NAME }}
         run: |
@@ -832,8 +527,6 @@ jobs:
             lucky_service="$mount_dir/etc/init.d/${LUCKY_SERVICE_NAME}"
             lucky_defaults="$mount_dir/etc/uci-defaults/98-lucky-daji"
             lucky_rc="$mount_dir/etc/rc.d/S99${LUCKY_SERVICE_NAME}"
-            soho_share_dir="$mount_dir/usr/share/soho"
-            soho_include="$mount_dir/usr/share/soho/include.sh"
 
             if [ "$VARIANT" = 'base' ]; then
               if sudo test -e "$plus_sysupgrade_script" || sudo test -e "$bypass_sysupgrade_script"; then
@@ -854,10 +547,6 @@ jobs:
                   exit 1
                 }
               done
-              if sudo grep -qF '/etc/soho/' "$plus_sysupgrade_script"; then
-                echo 'Soho preservation leaked into plus sysupgrade script.' >&2
-                exit 1
-              fi
               echo "Verified plus sysupgrade preservation script in ${VARIANT}: $(basename "$image_gz")"
             fi
 
@@ -865,22 +554,8 @@ jobs:
               sudo test -f "$bypass_sysupgrade_script" || { echo 'Bypass sysupgrade preservation script is missing.' >&2; exit 1; }
               sudo test -x "$bypass_sysupgrade_script" || { echo 'Bypass sysupgrade preservation script is not executable.' >&2; exit 1; }
               sudo /bin/sh -n "$bypass_sysupgrade_script"
-              sudo grep -qF '/etc/soho/' "$bypass_sysupgrade_script" || { echo 'Bypass sysupgrade preservation script is missing /etc/soho/.' >&2; exit 1; }
-              for local_package in soho-sealhelper soho luci-app-soho; do
-                package_installed "$local_package" || {
-                  echo "Local Soho package is missing from bypass: ${local_package}" >&2
-                  exit 1
-                }
-              done
-              sudo test -f "$soho_include" || { echo 'Soho runtime include file is missing from bypass image.' >&2; exit 1; }
-              for soho_init in soho soho-guard soho-web; do
-                sudo test -x "$mount_dir/etc/init.d/${soho_init}" || { echo "Soho init script is missing or not executable: ${soho_init}" >&2; exit 1; }
-                sudo /bin/sh -n "$mount_dir/etc/init.d/${soho_init}"
-                sudo find "$mount_dir/etc/rc.d" -maxdepth 1 -type l -name "S??${soho_init}" -print -quit | grep -q . || {
-                  echo "Soho rc.d autostart symlink is missing: ${soho_init}" >&2
-                  exit 1
-                }
-              done
+              # Legacy whole-directory keep rules for Soho/Lucky are still stripped if present.
+              sudo grep -qF '/etc/soho/' "$bypass_sysupgrade_script" || { echo 'Bypass sysupgrade preservation script is missing /etc/soho/ cleanup.' >&2; exit 1; }
               sudo test -f "$bypass_script" || { echo 'Bypass defaults script is missing from bypass image.' >&2; exit 1; }
               sudo test -x "$bypass_script" || { echo 'Bypass defaults script is not executable.' >&2; exit 1; }
               sudo /bin/sh -n "$bypass_script"
@@ -895,32 +570,23 @@ jobs:
               sudo grep -qF 'service_start $BIN -c $CONF' "$lucky_service" || { echo 'Lucky init script does not start Lucky like the bundled service.' >&2; exit 1; }
               sudo test -x "$lucky_defaults" || { echo 'Lucky first-boot defaults script is missing or not executable in bypass image.' >&2; exit 1; }
               sudo test -L "$lucky_rc" || { echo 'Lucky rc.d autostart symlink is missing in bypass image.' >&2; exit 1; }
-              sudo test -x "$mount_dir/usr/bin/mihomo" || { echo 'Embedded mihomo binary is missing or not executable in bypass image.' >&2; exit 1; }
-              mihomo_sha256=$(sudo sha256sum "$mount_dir/usr/bin/mihomo" | awk '{print $1}')
-              [ "$mihomo_sha256" = "$MIHOMO_SHA256_FILE" ] || { echo "Embedded mihomo SHA256 mismatch: expected ${MIHOMO_SHA256_FILE}, got ${mihomo_sha256}." >&2; exit 1; }
-              # Do not execute the aarch64 binary on the x86_64 builder (exit 126).
-              # Digest was verified at download time and must match the embedded file.
-              mihomo_file_info=$(sudo file -b "$mount_dir/usr/bin/mihomo" 2>/dev/null || true)
-              printf '%s\n' "$mihomo_file_info" | grep -Eqi 'ARM aarch64|ARM64|AArch64' || {
-                echo "Embedded mihomo is not an aarch64 binary: ${mihomo_file_info:-unknown}" >&2
-                exit 1
-              }
-              if [ -n "$MIHOMO_VERSION_FILE" ] && [ "$MIHOMO_VERSION_FILE" != 'local-fallback' ]; then
-                echo "Verified embedded mihomo ${MIHOMO_VERSION_FILE} via SHA256 (${mihomo_sha256})"
-              else
-                echo "Verified embedded mihomo via SHA256 (${mihomo_sha256})"
-              fi
-              # 验证预置 geodata（含 Soho UI 检测的 GeoLite2-ASN.mmdb 文件名）
-              for geo_file in GeoSite.dat geosite.dat geoip.dat country.mmdb ASN.mmdb GeoLite2-ASN.mmdb; do
-                sudo test -s "$mount_dir/etc/soho/geo/$geo_file" || {
-                  echo "Embedded geodata file is missing or empty: /etc/soho/geo/$geo_file" >&2
-                  exit 1
-                }
-              done
-              echo "Verified embedded geodata: $(basename "$image_gz")"
               sudo /bin/sh -n "$lucky_service"
               sudo /bin/sh -n "$lucky_defaults"
-              echo "Verified bypass defaults, Soho packages, and Lucky: $(basename "$image_gz")"
+              for local_package in soho-sealhelper soho luci-app-soho; do
+                if package_installed "$local_package"; then
+                  echo "Soho package leaked into bypass image: ${local_package}" >&2
+                  exit 1
+                fi
+              done
+              if sudo test -e "$mount_dir/usr/share/soho" || sudo test -e "$mount_dir/etc/init.d/soho" || sudo test -e "$mount_dir/etc/init.d/soho-guard" || sudo test -e "$mount_dir/etc/init.d/soho-web" || sudo test -e "$mount_dir/etc/init.d/soho-web-assets"; then
+                echo 'Soho files leaked into bypass image.' >&2
+                exit 1
+              fi
+              if sudo test -e "$mount_dir/etc/soho/geo" || sudo test -e "$mount_dir/usr/bin/mihomo" || sudo test -e "$mount_dir/lib/upgrade/soho-conffiles.sh"; then
+                echo 'Soho/mihomo leftovers leaked into bypass image.' >&2
+                exit 1
+              fi
+              echo "Verified bypass defaults and Lucky without Soho: $(basename "$image_gz")"
             else
               if sudo test -e "$bypass_sysupgrade_script"; then
                 echo 'Bypass sysupgrade preservation script leaked into a non-bypass image.' >&2
@@ -936,12 +602,12 @@ jobs:
                   exit 1
                 fi
               done
-              if sudo test -e "$soho_share_dir" || sudo test -e "$mount_dir/etc/init.d/soho" || sudo test -e "$mount_dir/etc/init.d/soho-guard" || sudo test -e "$mount_dir/etc/init.d/soho-web"; then
+              if sudo test -e "$mount_dir/usr/share/soho" || sudo test -e "$mount_dir/etc/init.d/soho" || sudo test -e "$mount_dir/etc/init.d/soho-guard" || sudo test -e "$mount_dir/etc/init.d/soho-web"; then
                 echo 'Soho files leaked into a non-bypass image.' >&2
                 exit 1
               fi
-              if sudo test -e "$mount_dir/etc/soho/geo"; then
-                echo 'Soho geodata leaked into a non-bypass image.' >&2
+              if sudo test -e "$mount_dir/etc/soho/geo" || sudo test -e "$mount_dir/usr/bin/mihomo"; then
+                echo 'Soho/mihomo leftovers leaked into a non-bypass image.' >&2
                 exit 1
               fi
               if sudo test -e "$lucky_dir" || sudo test -e "$lucky_service" || sudo test -e "$lucky_defaults"; then
@@ -1072,6 +738,6 @@ jobs:
 
             - 标准包：不带 `plus`/`bypass` 标记，使用官方 NanoPi R2S profile 默认包，不写入旁路由配置。
             - `*-plus-*`：在标准包基础上追加 `packages/plus.txt` 和手动输入的 `extra_packages`。
-            - `*-bypass-*`：在 `plus` 基础上追加 `packages/bypass.txt`、`files/bypass` 下的旁路由首启配置，并内置 Lucky 到 `/etc/lucky.daji`。该变体固定使用原生 WAN 口（`eth0`）作为旁路由上联，并禁用逻辑 WAN/WAN6。
+            - `*-bypass-*`：在 `plus` 基础上追加旁路由首启配置与 Lucky（`/etc/lucky.daji`），不包含 Soho。该变体固定使用原生 WAN 口（`eth0`）作为旁路由上联，并禁用逻辑 WAN/WAN6。
 
             校验文件：`sha256sums.txt`。分区配置记录：`rootfs-partsize.txt`。
