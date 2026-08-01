@@ -41,7 +41,7 @@ on:
           - 正式发布
           - 标记为预发布
   schedule:
-    - cron: '20 1 * * 5'
+    - cron: '20 1 25 * *'
 
 permissions:
   contents: write
